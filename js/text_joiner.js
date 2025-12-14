@@ -10,41 +10,31 @@ app.registerExtension({
                 const r = onNodeCreated ? onNodeCreated.apply(this, arguments) : undefined;
                 const node = this;
 
-                // 1. Locate and setup data_payload widget (Hidden)
+                // 1. Setup Payload
                 let payloadWidget = node.widgets.find(w => w.name === "data_payload");
-                
-                const hidePayload = (w) => {
-                     if (!w) return;
-                     w.type = "converted-widget";
-                     w.computeSize = () => [0, -4]; // No size
-                     w.draw = () => {}; // No visual
-                };
-
                 if (payloadWidget) {
-                    hidePayload(payloadWidget);
+                    payloadWidget.type = "converted-widget";
+                    payloadWidget.computeSize = () => [0, -4];
+                    payloadWidget.draw = () => {}; 
                 }
 
                 // 2. Sync Logic
-                const updatePayload = () => {
-                    // Re-find in case reference stale (though usually objects persist)
-                    // But good to be safe if list re-ordered.
-                    const pWidget = node.widgets.find(w => w.name === "data_payload");
+                this.updatePayload = () => {
                     const texts = [];
-                    if (node.widgets) {
-                        for (const w of node.widgets) {
+                    if (this.widgets) {
+                        for (const w of this.widgets) {
                             if (w.name && w.name.startsWith("text_")) {
                                 texts.push(w.value);
                             }
                         }
                     }
+                    const pWidget = this.widgets.find(w => w.name === "data_payload");
                     if (pWidget) {
                         pWidget.value = JSON.stringify(texts);
                     }
                 };
                 
-                this.updatePayload = updatePayload;
-
-                // 3. Helper to create a text widget
+                // 3. Create Widget Helper
                 const createTextWidget = (index) => {
                     const name = `text_${index}`;
                     const exists = node.widgets.find(w => w.name === name);
@@ -56,12 +46,12 @@ app.registerExtension({
                     const originalCallback = widget.callback;
                     widget.callback = function(v) {
                         if (originalCallback) originalCallback.apply(this, arguments);
-                        updatePayload();
+                        node.updatePayload();
                     };
                     return widget;
                 };
 
-                // 4. Initial Setup
+                // 4. Initial Defaults
                 for (let i = 0; i < 5; i++) {
                      createTextWidget(i);
                 }
@@ -79,117 +69,18 @@ app.registerExtension({
                         }
                     }
                     createTextWidget(maxIndex + 1);
-                    updatePayload(); 
+                    node.updatePayload();
                     
-                    // Resize & Fix Order
-                    node.onResize(node.size); // Trigger resize logic (custom or default)
+                    if (node.onResize) node.onResize(node.size); 
                     const computed = node.computeSize();
                     node.setSize([Math.max(node.size[0], computed[0]), computed[1]]);
                     
-                    // We must fix order immediately after adding to ensure new widget is in correct place (before payload)
-                    // Actually payload is at end (999). Text is 3+index.
-                    // This sort is stable-ish.
-                    fixOrder(); 
+                    if (node.fixOrder) node.fixOrder(); 
                 }, { serialize: false });
 
                 // 6. Fix Order
-                // Must expose this for usage in callback
-                const fixOrder = () => {
-                    node.widgets.sort((a, b) => {
-                         const rank = (w) => {
-                             if (w.name === "join_string") return 0;
-                             if (w.name === "trim_whitespace") return 1;
-                             if (w.name === "data_payload") return 9999; // Hidden at absolute end
-                             if (w.label === "Add text box" || w.type === "button") return 2; // Below Trim
-                             if (w.name && w.name.startsWith("text_")) {
-                                 const parts = w.name.split("_");
-                                 const idx = parseInt(parts[1]);
-                                 return 100 + idx; // From 100 onwards
-                             }
-                             return 50; // Unknown
-                         };
-                         return rank(a) - rank(b);
-                    });
-                };
-                
-                fixOrder();
-                // Recurring check because ComfyUI creation process might be async/incremental for some things
-                setTimeout(fixOrder, 50);
-
-                updatePayload();
-
-                return r;
-            };
-
-            const onConfigure = nodeType.prototype.onConfigure;
-            nodeType.prototype.onConfigure = function(w) {
-                if (onConfigure) onConfigure.apply(this, arguments);
-                
-                const node = this;
-                let payloadWidget = node.widgets.find(w => w.name === "data_payload");
-                if (payloadWidget) {
-                    payloadWidget.type = "converted-widget";
-                    payloadWidget.computeSize = () => [0, -4];
-                    payloadWidget.draw = () => {};
-                }
-
-                if (w && w.widgets_values) {
-                    // Logic to reconstruct extra widgets if they exist in source
-                    // But since we use JSON payload, do we rely on widgets_values for display restoration?
-                    // Yes. user expects to see what they saved.
-                    // widgets_values contains [join, trim, text0, text1..., payload]
-                    // We can infer count from it.
-                    // or parse payload if initialized?
-                    // widgets_values is just an array of values.
-                    
-                    const savedLength = w.widgets_values.length; 
-                    // Expected min: join, trim, payload = 3.
-                    // texts = length - 3.
-                    
-                    if (savedLength >= 3) {
-                         const textCount = savedLength - 3; // Excluding join, trim, payload
-                         // We start with 5.
-                         if (textCount > 0) {
-                             // Create up to textCount-1 (indices)
-                             for (let i = 0; i < textCount; i++) {
-                                 const name = `text_${i}`;
-                                 if (!node.widgets.find(x => x.name === name)) {
-                                     const config = ["STRING", { multiline: true }];
-                                     const { widget } = ComfyWidgets.STRING(node, name, config, app);
-                                 }
-                             }
-                         }
-                    }
-                }
-
-                // Hook callbacks
-                const updatePayload = this.updatePayload || (() => {
-                     const pWidget = node.widgets.find(w => w.name === "data_payload");
-                     const texts = [];
-                     for (const widget of node.widgets) {
-                        if (widget.name && widget.name.startsWith("text_")) {
-                            texts.push(widget.value);
-                        }
-                     }
-                     if (pWidget) pWidget.value = JSON.stringify(texts);
-                });
-
-                for (const widget of node.widgets) {
-                    if (widget.name && widget.name.startsWith("text_")) {
-                         // Hook
-                         if (!widget.hasPayloadHook) {
-                             const originalCallback = widget.callback;
-                             widget.callback = function(v) {
-                                 if(originalCallback) originalCallback.apply(this, arguments);
-                                 updatePayload();
-                             };
-                             widget.hasPayloadHook = true;
-                         }
-                    }
-                }
-                
-                // Sort
-                const fixOrder = () => {
+                this.fixOrder = () => {
+                    if (!node.widgets) return;
                     node.widgets.sort((a, b) => {
                          const rank = (w) => {
                              if (w.name === "join_string") return 0;
@@ -206,7 +97,143 @@ app.registerExtension({
                          return rank(a) - rank(b);
                     });
                 };
-                fixOrder();
+                
+                this.fixOrder();
+                setTimeout(() => this.fixOrder(), 50);
+                this.updatePayload();
+
+                return r;
+            };
+
+            const onConfigure = nodeType.prototype.onConfigure;
+            nodeType.prototype.onConfigure = function(w) {
+                const node = this;
+                
+                // 1. SMART RECOVERY Logic
+                // We use the last item in widgets_values (Expected Payload) as Source of Truth
+                // because it contains the exact list of texts we saved.
+                
+                if (w && w.widgets_values && w.widgets_values.length > 0) {
+                    const savedValues = w.widgets_values;
+                    const lastVal = savedValues[savedValues.length - 1];
+                    let payloadTexts = [];
+                    let isValidPayload = false;
+                    
+                    try {
+                        const parsed = JSON.parse(lastVal);
+                        if (Array.isArray(parsed)) {
+                            payloadTexts = parsed;
+                            isValidPayload = true;
+                        }
+                    } catch (e) {
+                        // ignore error, maybe payload isn't last?
+                    }
+
+                    if (isValidPayload) {
+                         // Payload tells us EXACTLY how many texts we expect
+                         const textCount = payloadTexts.length;
+                         
+                         // Ensure we have correct number of widgets
+                         // First, recreate up to textCount
+                         for (let i = 0; i < textCount; i++) {
+                             const name = `text_${i}`;
+                             if (!node.widgets.find(x => x.name === name)) {
+                                 // Recreate missing
+                                 const config = ["STRING", { multiline: true }];
+                                 const { widget } = ComfyWidgets.STRING(node, name, config, app);
+                             }
+                         }
+                    }
+                }
+
+                // 2. Call Standard Configure
+                if (onConfigure) onConfigure.apply(this, arguments);
+
+                // 3. Manually Repair Values (Again, using Payload as anchor)
+                if (w && w.widgets_values && w.widgets_values.length > 0) {
+                    const savedValues = w.widgets_values;
+                    
+                    // Fixed: Join(0), Trim(1).
+                    // Dynamic: Texts.
+                    // Last: Payload.
+                    // Unknown: Button? (Maybe inserted at 2?)
+                    
+                    const joinW = node.widgets.find(x => x.name === "join_string");
+                    if (joinW) joinW.value = savedValues[0];
+
+                    const trimW = node.widgets.find(x => x.name === "trim_whitespace");
+                    if (trimW) trimW.value = savedValues[1];
+                    
+                    const lastIdx = savedValues.length - 1;
+                    const payloadVal = savedValues[lastIdx];
+                    
+                    // Restore Payload Widget
+                    const payloadW = node.widgets.find(x => x.name === "data_payload");
+                    if (payloadW) payloadW.value = payloadVal;
+                    
+                    // Restore Texts
+                    // We parse payload to know how many texts we SHOULD have
+                    // And we map them 1-to-1.
+                    // THIS IS SAFER than relying on index offsets in widgets_values
+                    // because widgets_values might contain the button or not.
+                    
+                    try {
+                        const texts = JSON.parse(payloadVal);
+                        if (Array.isArray(texts)) {
+                            texts.forEach((txt, i) => {
+                                const widgetName = `text_${i}`;
+                                const widget = node.widgets.find(x => x.name === widgetName);
+                                if (widget) {
+                                    widget.value = txt; // Assign correct text from Payload Truth
+                                }
+                            });
+                        }
+                    } catch(e) {
+                         // Fallback? If payload parse fails, we are in trouble anyway.
+                    }
+                }
+
+                // 4. Cleanup & Hooks
+                let payloadWidget = node.widgets.find(w => w.name === "data_payload");
+                if (payloadWidget) {
+                    payloadWidget.type = "converted-widget";
+                    payloadWidget.computeSize = () => [0, -4];
+                    payloadWidget.draw = () => {};
+                }
+
+                if (!this.updatePayload) {
+                    this.updatePayload = () => {
+                        const texts = [];
+                        if (node.widgets) {
+                            for (const w of node.widgets) {
+                                if (w.name && w.name.startsWith("text_")) {
+                                    texts.push(w.value);
+                                }
+                            }
+                        }
+                        const pWidget = node.widgets.find(w => w.name === "data_payload");
+                        if (pWidget) pWidget.value = JSON.stringify(texts);
+                    };
+                }
+
+                for (const widget of node.widgets) {
+                    if (widget.name && widget.name.startsWith("text_")) {
+                         if (!widget.callback || !widget.toString().includes("updatePayload")) {
+                             const originalCallback = widget.callback;
+                             widget.callback = function(v) {
+                                 if(originalCallback) originalCallback.apply(this, arguments);
+                                 node.updatePayload();
+                             };
+                         }
+                    }
+                }
+                
+                if (this.fixOrder) this.fixOrder();
+                
+                // Force sync
+                setTimeout(() => {
+                    node.updatePayload();
+                }, 100);
             };
         }
     }
