@@ -15,7 +15,7 @@ app.registerExtension({
                 if (payloadWidget) {
                     payloadWidget.type = "converted-widget";
                     payloadWidget.computeSize = () => [0, -4];
-                    payloadWidget.draw = () => {}; 
+                    payloadWidget.draw = () => { };
                 }
 
                 // 2. Sync Logic
@@ -33,7 +33,7 @@ app.registerExtension({
                         pWidget.value = JSON.stringify(texts);
                     }
                 };
-                
+
                 // 3. Create Widget Helper
                 const createTextWidget = (index) => {
                     const name = `text_${index}`;
@@ -42,18 +42,24 @@ app.registerExtension({
 
                     const config = ["STRING", { multiline: true }];
                     const { widget } = ComfyWidgets.STRING(node, name, config, app);
-                    
+
                     const originalCallback = widget.callback;
-                    widget.callback = function(v) {
+                    widget.callback = function (v) {
                         if (originalCallback) originalCallback.apply(this, arguments);
                         node.updatePayload();
                     };
+
+                    // Attach Autocomplete if available (from autocomplete.js)
+                    if (node.attachAutocomplete) {
+                        node.attachAutocomplete(widget);
+                    }
+
                     return widget;
                 };
 
                 // 4. Initial Defaults
                 for (let i = 0; i < 5; i++) {
-                     createTextWidget(i);
+                    createTextWidget(i);
                 }
 
                 // 5. Buttons
@@ -70,18 +76,18 @@ app.registerExtension({
                     }
                     createTextWidget(maxIndex + 1);
                     node.updatePayload();
-                    
-                    if (node.onResize) node.onResize(node.size); 
+
+                    if (node.onResize) node.onResize(node.size);
                     const computed = node.computeSize();
                     node.setSize([Math.max(node.size[0], computed[0]), computed[1]]);
-                    
-                    if (node.fixOrder) node.fixOrder(); 
+
+                    if (node.fixOrder) node.fixOrder();
                 }, { serialize: false });
 
                 const removeButton = node.addWidget("button", "Remove text box", null, () => {
                     let maxIndex = -1;
                     let maxWidgetIndex = -1;
-                    
+
                     for (let i = 0; i < node.widgets.length; i++) {
                         const w = node.widgets[i];
                         if (w.name && w.name.startsWith("text_")) {
@@ -95,11 +101,11 @@ app.registerExtension({
                             }
                         }
                     }
-                    
+
                     // Keep 0-4 (5 items)
                     if (maxIndex > 4 && maxWidgetIndex !== -1) {
                         const widgetToRemove = node.widgets[maxWidgetIndex];
-                        
+
                         // CLEANUP: Manually remove DOM elements if they exist
                         if (widgetToRemove.onRemove) {
                             widgetToRemove.onRemove();
@@ -115,37 +121,37 @@ app.registerExtension({
                         // Remove from array
                         node.widgets.splice(maxWidgetIndex, 1);
                         node.updatePayload();
-                        
+
                         if (node.onResize) node.onResize(node.size);
                         const computed = node.computeSize();
                         node.setSize([Math.max(node.size[0], computed[0]), computed[1]]);
-                        
+
                         if (node.fixOrder) node.fixOrder();
                         node.setDirtyCanvas(true, true);
-                    } 
+                    }
                 }, { serialize: false });
 
                 // 6. Fix Order
                 this.fixOrder = () => {
                     if (!node.widgets) return;
                     node.widgets.sort((a, b) => {
-                         const rank = (w) => {
-                             if (w.name === "join_string") return 0;
-                             if (w.name === "trim_whitespace") return 1;
-                             if (w.name === "data_payload") return 9999; 
-                             if (w.label === "Add text box" || w.type === "button") return 2; 
-                             if (w.label === "Remove text box") return 3;
-                             if (w.name && w.name.startsWith("text_")) {
-                                 const parts = w.name.split("_");
-                                 const idx = parseInt(parts[1]);
-                                 return 100 + idx;
-                             }
-                             return 50; 
-                         };
-                         return rank(a) - rank(b);
+                        const rank = (w) => {
+                            if (w.name === "join_string") return 0;
+                            if (w.name === "trim_whitespace") return 1;
+                            if (w.name === "data_payload") return 9999;
+                            if (w.label === "Add text box" || w.type === "button") return 2;
+                            if (w.label === "Remove text box") return 3;
+                            if (w.name && w.name.startsWith("text_")) {
+                                const parts = w.name.split("_");
+                                const idx = parseInt(parts[1]);
+                                return 100 + idx;
+                            }
+                            return 50;
+                        };
+                        return rank(a) - rank(b);
                     });
                 };
-                
+
                 this.fixOrder();
                 setTimeout(() => this.fixOrder(), 50);
                 this.updatePayload();
@@ -154,16 +160,16 @@ app.registerExtension({
             };
 
             const onConfigure = nodeType.prototype.onConfigure;
-            nodeType.prototype.onConfigure = function(w) {
+            nodeType.prototype.onConfigure = function (w) {
                 const node = this;
-                
+
                 // 1. SMART RECOVERY Logic from Payload
                 if (w && w.widgets_values && w.widgets_values.length > 0) {
                     const savedValues = w.widgets_values;
                     const lastVal = savedValues[savedValues.length - 1];
                     let payloadTexts = [];
                     let isValidPayload = false;
-                    
+
                     try {
                         const parsed = JSON.parse(lastVal);
                         if (Array.isArray(parsed)) {
@@ -173,14 +179,14 @@ app.registerExtension({
                     } catch (e) { }
 
                     if (isValidPayload) {
-                         const textCount = payloadTexts.length;
-                         for (let i = 0; i < textCount; i++) {
-                             const name = `text_${i}`;
-                             if (!node.widgets.find(x => x.name === name)) {
-                                 const config = ["STRING", { multiline: true }];
-                                 const { widget } = ComfyWidgets.STRING(node, name, config, app);
-                             }
-                         }
+                        const textCount = payloadTexts.length;
+                        for (let i = 0; i < textCount; i++) {
+                            const name = `text_${i}`;
+                            if (!node.widgets.find(x => x.name === name)) {
+                                const config = ["STRING", { multiline: true }];
+                                const { widget } = ComfyWidgets.STRING(node, name, config, app);
+                            }
+                        }
                     }
                 }
 
@@ -189,19 +195,19 @@ app.registerExtension({
                 // 2. Repair Values
                 if (w && w.widgets_values && w.widgets_values.length > 0) {
                     const savedValues = w.widgets_values;
-                    
+
                     const joinW = node.widgets.find(x => x.name === "join_string");
                     if (joinW) joinW.value = savedValues[0];
 
                     const trimW = node.widgets.find(x => x.name === "trim_whitespace");
                     if (trimW) trimW.value = savedValues[1];
-                    
+
                     const lastIdx = savedValues.length - 1;
                     const payloadVal = savedValues[lastIdx];
-                    
+
                     const payloadW = node.widgets.find(x => x.name === "data_payload");
                     if (payloadW) payloadW.value = payloadVal;
-                    
+
                     try {
                         const texts = JSON.parse(payloadVal);
                         if (Array.isArray(texts)) {
@@ -213,7 +219,7 @@ app.registerExtension({
                                 }
                             });
                         }
-                    } catch(e) { }
+                    } catch (e) { }
                 }
 
                 // 3. Cleanup & Hooks
@@ -221,7 +227,7 @@ app.registerExtension({
                 if (payloadWidget) {
                     payloadWidget.type = "converted-widget";
                     payloadWidget.computeSize = () => [0, -4];
-                    payloadWidget.draw = () => {};
+                    payloadWidget.draw = () => { };
                 }
 
                 if (!this.updatePayload) {
@@ -241,36 +247,36 @@ app.registerExtension({
 
                 for (const widget of node.widgets) {
                     if (widget.name && widget.name.startsWith("text_")) {
-                         if (!widget.callback || !widget.toString().includes("updatePayload")) {
-                             const originalCallback = widget.callback;
-                             widget.callback = function(v) {
-                                 if(originalCallback) originalCallback.apply(this, arguments);
-                                 node.updatePayload();
-                             };
-                         }
+                        if (!widget.callback || !widget.toString().includes("updatePayload")) {
+                            const originalCallback = widget.callback;
+                            widget.callback = function (v) {
+                                if (originalCallback) originalCallback.apply(this, arguments);
+                                node.updatePayload();
+                            };
+                        }
                     }
                 }
-                
+
                 if (this.fixOrder) this.fixOrder();
                 else {
                     node.widgets.sort((a, b) => {
-                         const rank = (w) => {
-                             if (w.name === "join_string") return 0;
-                             if (w.name === "trim_whitespace") return 1;
-                             if (w.name === "data_payload") return 9999;
-                             if (w.label === "Add text box" || w.type === "button") return 2;
-                             if (w.label === "Remove text box") return 3;
-                             if (w.name && w.name.startsWith("text_")) {
-                                 const parts = w.name.split("_");
-                                 const idx = parseInt(parts[1]);
-                                 return 100 + idx;
-                             }
-                             return 50; 
-                         };
-                         return rank(a) - rank(b);
+                        const rank = (w) => {
+                            if (w.name === "join_string") return 0;
+                            if (w.name === "trim_whitespace") return 1;
+                            if (w.name === "data_payload") return 9999;
+                            if (w.label === "Add text box" || w.type === "button") return 2;
+                            if (w.label === "Remove text box") return 3;
+                            if (w.name && w.name.startsWith("text_")) {
+                                const parts = w.name.split("_");
+                                const idx = parseInt(parts[1]);
+                                return 100 + idx;
+                            }
+                            return 50;
+                        };
+                        return rank(a) - rank(b);
                     });
                 }
-                
+
                 setTimeout(() => {
                     node.updatePayload();
                 }, 100);
