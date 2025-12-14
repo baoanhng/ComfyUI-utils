@@ -47,6 +47,14 @@ class TextJoinerNode:
                 if trim_whitespace:
                     text_value = text_value.strip()
                 
+                # Trim leading/trailing commas as requested
+                text_value = text_value.strip(',')
+                
+                if trim_whitespace:
+                    # Strip again in case comma removal exposed more whitespace
+                    # e.g. ", value" -> " value" -> "value"
+                    text_value = text_value.strip()
+                
                 if text_value:
                     final_texts.append(text_value)
 
