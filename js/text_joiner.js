@@ -1,4 +1,5 @@
 import { app } from "../../scripts/app.js";
+import { api } from "../../scripts/api.js";
 import { ComfyWidgets } from "../../scripts/widgets.js";
 
 app.registerExtension({
@@ -9,6 +10,44 @@ app.registerExtension({
             nodeType.prototype.onNodeCreated = function () {
                 const r = onNodeCreated ? onNodeCreated.apply(this, arguments) : undefined;
                 const node = this;
+
+                // --- UI Sync (Backend -> Frontend) ---
+                const onUpdate = (event) => {
+                    const data = event.detail;
+                    // console.log("TextJoiner Event:", data, "Node ID:", node.id);
+                    if (data && data.node_id == node.id && data.values) {
+                        const values = data.values;
+                        const textWidgets = node.widgets.filter(w => w.name && w.name.startsWith("text_"));
+                        textWidgets.sort((a, b) => {
+                            const idxA = parseInt(a.name.split("_")[1]);
+                            const idxB = parseInt(b.name.split("_")[1]);
+                            return idxA - idxB;
+                        });
+
+                        textWidgets.forEach((w, i) => {
+                            if (i < values.length) {
+                                if (w.value !== values[i]) {
+                                    w.value = values[i];
+                                    if (w.callback) w.callback(w.value);
+                                }
+                            } else {
+                                if (w.value !== "") {
+                                    w.value = "";
+                                    if (w.callback) w.callback("");
+                                }
+                            }
+                        });
+                        if (node.updatePayload) node.updatePayload();
+                    }
+                };
+                api.addEventListener("my_utils.text_joiner.update", onUpdate);
+
+                const onRemoved = node.onRemoved;
+                node.onRemoved = function () {
+                    if (onRemoved) onRemoved.apply(this, arguments);
+                    api.removeEventListener("my_utils.text_joiner.update", onUpdate);
+                };
+                // -------------------------------------
 
                 // 1. Setup Payload
                 let payloadWidget = node.widgets.find(w => w.name === "data_payload");
