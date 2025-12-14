@@ -24,7 +24,7 @@ class AutocompletePopup {
             zIndex: "10000",
             maxHeight: "200px",
             overflowY: "auto",
-            width: "200px",
+            width: "400px",
             boxShadow: "0 4px 6px rgba(0,0,0,0.3)"
         });
         document.body.appendChild(this.element);
@@ -32,13 +32,13 @@ class AutocompletePopup {
         this.visible = false;
         this.selectedIndex = 0;
         this.items = [];
-        this.targetInput = null;
+        this.targetWidget = null;
         this.triggerPos = 0;
     }
 
-    show(items, x, y, input, triggerPos) {
+    show(items, x, y, widget, triggerPos) {
         this.items = items;
-        this.targetInput = input;
+        this.targetWidget = widget;
         this.triggerPos = triggerPos;
         this.selectedIndex = 0;
 
@@ -67,7 +67,7 @@ class AutocompletePopup {
     hide() {
         this.element.style.display = "none";
         this.visible = false;
-        this.targetInput = null;
+        this.targetWidget = null;
     }
 
     render() {
@@ -77,23 +77,23 @@ class AutocompletePopup {
     }
 
     select(value) {
-        if (!this.targetInput) return;
+        if (!this.targetWidget || !this.targetWidget.inputEl) return;
 
-        const text = this.targetInput.value;
+        const input = this.targetWidget.inputEl;
+        const text = input.value;
         const before = text.substring(0, this.triggerPos);
-        const after = text.substring(this.targetInput.selectionEnd);
+        const after = text.substring(input.selectionEnd);
 
-        // We triggered on "__", so we replace from triggerPos
-        // value contains the full tag e.g. "__Tag__"
-        // But what if user typed "__S"? We need to replace "__S" with "__Sex__"
-        // Let's assume user just typed expected prefix.
+        input.setRangeText(value, this.triggerPos, input.selectionEnd, "end");
 
-        // Better logic: replace the current partial word being typed?
-        // For simplicity: Insert at triggerPos
+        // Critical: Trigger updates
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        if (this.targetWidget.callback) {
+            this.targetWidget.callback(input.value);
+        }
 
-        this.targetInput.setRangeText(value, this.triggerPos, this.targetInput.selectionEnd, "end");
         this.hide();
-        this.targetInput.focus();
+        input.focus();
     }
 }
 
@@ -104,12 +104,6 @@ app.registerExtension({
     name: "MyUtils.WildcardAutocomplete",
     async setup() {
         wildcardsCache = await fetchWildcards();
-
-        // Global listener? Or attach to widgets?
-        // Comfy widgets are dynamically created. A global listener on document body for 'input' 
-        // delegated to textarea might be cleaner but risky.
-        // Let's attach to widgets in node created, similar to logic in text_joiner.js 
-        // But this extension is separate.
     },
     async beforeRegisterNodeDef(nodeType, nodeData) {
         if (nodeData.name === "TextJoiner") {
@@ -154,26 +148,21 @@ app.registerExtension({
                         const val = widget.inputEl.value;
                         const cursor = widget.inputEl.selectionStart;
 
-                        // Look backwards for "__"
-                        // e.g. "Some text __Se"
                         const lastDoubleUnderscore = val.lastIndexOf("__", cursor);
 
-                        if (lastDoubleUnderscore !== -1 && (cursor - lastDoubleUnderscore) < 50) { // Limit lookback
-                            const query = val.substring(lastDoubleUnderscore, cursor); // e.g. "__Se"
+                        if (lastDoubleUnderscore !== -1 && (cursor - lastDoubleUnderscore) < 50) {
+                            const query = val.substring(lastDoubleUnderscore, cursor);
 
-                            // Filter cache
                             const matches = wildcardsCache.filter(w => w.toLowerCase().includes(query.toLowerCase()));
 
                             if (matches.length > 0) {
-                                // Show popup
-                                // Calculate position? 
-                                // Simplest: Near the input element absolute position
+
                                 const rect = widget.inputEl.getBoundingClientRect();
                                 autocomplete.show(
-                                    matches.slice(0, 10), // Limit 10
+                                    matches.slice(0, 10),
                                     rect.left + 20,
-                                    rect.top + 20 + (widget.inputEl.clientHeight / 2), // Rough estimation
-                                    widget.inputEl,
+                                    rect.top + 20 + (widget.inputEl.clientHeight / 2),
+                                    widget, // Pass widget explicitly
                                     lastDoubleUnderscore
                                 );
                             } else {
@@ -185,16 +174,8 @@ app.registerExtension({
                     });
                 };
 
-                // Attach to initial widgets
-                // This runs ONCE on creation. But our text widgets are dynamic!
-                // We need to hook into the creation logic in text_joiner.js? 
-                // OR we just use a MutationObserver? 
-                // OR we can export this attach function and call it from text_joiner.js?
-                // Exporting is cleaner.
-
                 node.attachAutocomplete = attachAutocomplete;
 
-                // Attach to existing
                 if (node.widgets) {
                     node.widgets.forEach(w => {
                         if (w.name && w.name.startsWith("text_")) attachAutocomplete(w);
