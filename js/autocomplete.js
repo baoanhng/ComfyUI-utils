@@ -85,7 +85,7 @@ class AutocompletePopup {
         const after = text.substring(input.selectionEnd);
 
         // Append comma and space as requested, ensuring no double comma from source
-        // const finalValue = value + ", ";
+        // const finalValue = value + ", "; // Conflict with AutocompletePlus Node
         input.setRangeText(value, this.triggerPos, input.selectionEnd, "end");
 
         // Critical: Trigger updates
