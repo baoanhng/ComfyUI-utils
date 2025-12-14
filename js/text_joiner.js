@@ -98,12 +98,30 @@ app.registerExtension({
                     
                     // Keep 0-4 (5 items)
                     if (maxIndex > 4 && maxWidgetIndex !== -1) {
+                        const widgetToRemove = node.widgets[maxWidgetIndex];
+                        
+                        // CLEANUP: Manually remove DOM elements if they exist
+                        if (widgetToRemove.onRemove) {
+                            widgetToRemove.onRemove();
+                        }
+                        // Check for common DOM properties on Comfy widgets
+                        if (widgetToRemove.element && widgetToRemove.element.parentNode) {
+                            widgetToRemove.element.parentNode.removeChild(widgetToRemove.element);
+                        }
+                        if (widgetToRemove.inputEl && widgetToRemove.inputEl.parentNode) {
+                            widgetToRemove.inputEl.parentNode.removeChild(widgetToRemove.inputEl);
+                        }
+
+                        // Remove from array
                         node.widgets.splice(maxWidgetIndex, 1);
                         node.updatePayload();
                         
                         if (node.onResize) node.onResize(node.size);
                         const computed = node.computeSize();
                         node.setSize([Math.max(node.size[0], computed[0]), computed[1]]);
+                        
+                        if (node.fixOrder) node.fixOrder();
+                        node.setDirtyCanvas(true, true);
                     } 
                 }, { serialize: false });
 
@@ -115,7 +133,7 @@ app.registerExtension({
                              if (w.name === "join_string") return 0;
                              if (w.name === "trim_whitespace") return 1;
                              if (w.name === "data_payload") return 9999; 
-                             if (w.label === "Add text box") return 2; 
+                             if (w.label === "Add text box" || w.type === "button") return 2; 
                              if (w.label === "Remove text box") return 3;
                              if (w.name && w.name.startsWith("text_")) {
                                  const parts = w.name.split("_");
@@ -156,7 +174,6 @@ app.registerExtension({
 
                     if (isValidPayload) {
                          const textCount = payloadTexts.length;
-                         // Ensure correct number of widgets
                          for (let i = 0; i < textCount; i++) {
                              const name = `text_${i}`;
                              if (!node.widgets.find(x => x.name === name)) {
@@ -169,7 +186,7 @@ app.registerExtension({
 
                 if (onConfigure) onConfigure.apply(this, arguments);
 
-                // 2. Manually Repair Values using Payload
+                // 2. Repair Values
                 if (w && w.widgets_values && w.widgets_values.length > 0) {
                     const savedValues = w.widgets_values;
                     
