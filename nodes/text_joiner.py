@@ -1,4 +1,5 @@
 import json
+import re
 from server import PromptServer
 
 class TextJoinerNode:
@@ -23,8 +24,8 @@ class TextJoinerNode:
             }
         }
 
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("concatenated_text",)
+    RETURN_TYPES = ("STRING", "INT", "INT")
+    RETURN_NAMES = ("concatenated_text", "width", "height")
     FUNCTION = "process_text"
 
     CATEGORY = "utils"
@@ -94,4 +95,23 @@ class TextJoinerNode:
                     final_texts.append(text_value)
 
         result_string = join_string.join(final_texts)
-        return (result_string,)
+        
+        # 4. Extract Size Logic
+        width = 0
+        height = 0
+        
+        # Regex to find /* size: 1024x1024 */
+        # Case insensitive? User said "c-style comment".
+        # \s* handle spaces.
+        size_matches = re.findall(r"/\*\s*size:\s*(\d+)\s*x\s*(\d+)\s*\*/", result_string, re.IGNORECASE)
+        
+        if size_matches:
+            # Take the last one found
+            last_match = size_matches[-1]
+            try:
+                width = int(last_match[0])
+                height = int(last_match[1])
+            except:
+                pass
+
+        return (result_string, width, height)
