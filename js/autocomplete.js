@@ -43,6 +43,30 @@ class AutocompletePopup {
         this.selectedIndex = 0;
 
         this.element.innerHTML = "";
+
+        // Close Button
+        const closeBtn = document.createElement("div");
+        closeBtn.textContent = "×";
+        Object.assign(closeBtn.style, {
+            position: "absolute",
+            top: "0",
+            right: "0",
+            color: "#888",
+            cursor: "pointer",
+            padding: "2px 6px",
+            fontSize: "14px",
+            fontWeight: "bold",
+            zIndex: "10001",
+            backgroundColor: "rgba(0,0,0,0.5)"
+        });
+        closeBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            this.hide();
+        });
+        closeBtn.addEventListener("mouseenter", () => closeBtn.style.color = "#fff");
+        closeBtn.addEventListener("mouseleave", () => closeBtn.style.color = "#888");
+        this.element.appendChild(closeBtn);
+
         items.forEach((item, idx) => {
             const div = document.createElement("div");
             div.textContent = item;
