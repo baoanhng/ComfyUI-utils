@@ -224,6 +224,9 @@ app.registerExtension({
                             if (!node.widgets.find(x => x.name === name)) {
                                 const config = ["STRING", { multiline: true }];
                                 const { widget } = ComfyWidgets.STRING(node, name, config, app);
+                                if (node.attachAutocomplete) {
+                                    node.attachAutocomplete(widget);
+                                }
                             }
                         }
                     }
