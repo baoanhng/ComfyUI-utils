@@ -105,12 +105,25 @@ class AutocompletePopup {
 
         const input = this.targetWidget.inputEl;
         const text = input.value;
-        const before = text.substring(0, this.triggerPos);
+        // const before = text.substring(0, this.triggerPos);
         const after = text.substring(input.selectionEnd);
+
+        let endPos = input.selectionEnd;
+
+        // Smart cleanup for comment syntax
+        if (value.endsWith("*/")) {
+            // If the user already typed "*/" after the cursor, consume it.
+            if (after.trim().startsWith("*/")) {
+                const offset = after.indexOf("*/");
+                endPos += offset + 2;
+            } else if (after.startsWith("*/")) {
+                endPos += 2;
+            }
+        }
 
         // Append comma and space as requested, ensuring no double comma from source
         // const finalValue = value + ", "; // Conflict with AutocompletePlus Node
-        input.setRangeText(value, this.triggerPos, input.selectionEnd, "end");
+        input.setRangeText(value, this.triggerPos, endPos, "end");
 
         // Critical: Trigger updates
         input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -125,6 +138,25 @@ class AutocompletePopup {
 
 const autocomplete = new AutocompletePopup();
 let wildcardsCache = [];
+
+// Base Resolutions
+const BASE_RESOLUTIONS = [
+    [896, 1152],
+    [832, 1216],
+    [768, 1344],
+    [640, 1536],
+    [1024, 1536],
+    [1024, 1024]
+];
+
+// Generate Presets (Forward + Reverses)
+const SIZE_PRESETS = [];
+BASE_RESOLUTIONS.forEach(([w, h]) => {
+    SIZE_PRESETS.push(`/* size: ${w}x${h} */`);
+    if (w !== h) {
+        SIZE_PRESETS.push(`/* size: ${h}x${w} */`);
+    }
+});
 
 app.registerExtension({
     name: "MyUtils.WildcardAutocomplete",
@@ -174,26 +206,40 @@ app.registerExtension({
                         const val = widget.inputEl.value;
                         const cursor = widget.inputEl.selectionStart;
 
-                        const lastDoubleUnderscore = val.lastIndexOf("__", cursor);
+                        // Check Triggers proximity
+                        const lastWildcard = val.lastIndexOf("__", cursor);
+                        const lastSize = val.lastIndexOf("/*", cursor);
 
-                        if (lastDoubleUnderscore !== -1 && (cursor - lastDoubleUnderscore) < 50) {
-                            const query = val.substring(lastDoubleUnderscore, cursor);
+                        // Pick the closest active trigger
+                        let matches = [];
+                        let triggerPos = -1;
 
-                            const matches = wildcardsCache.filter(w => w.toLowerCase().includes(query.toLowerCase()));
+                        // Check Size Trigger
+                        // Must be closer than wildcard or wildcard not found
+                        if (lastSize !== -1 && (lastWildcard === -1 || lastSize > lastWildcard) && (cursor - lastSize) < 20) {
+                            // Size query logic
+                            const query = val.substring(lastSize, cursor);
+                            // Simple contains check or startswith based on query
+                            // query starts with "/*", maybe "/* s", "/* size"...
+                            matches = SIZE_PRESETS.filter(s => s.toLowerCase().startsWith(query.toLowerCase()));
+                            triggerPos = lastSize;
+                        }
+                        // Check Wildcard Trigger
+                        else if (lastWildcard !== -1 && (cursor - lastWildcard) < 50) {
+                            const query = val.substring(lastWildcard, cursor);
+                            matches = wildcardsCache.filter(w => w.toLowerCase().includes(query.toLowerCase()));
+                            triggerPos = lastWildcard;
+                        }
 
-                            if (matches.length > 0) {
-
-                                const rect = widget.inputEl.getBoundingClientRect();
-                                autocomplete.show(
-                                    matches.slice(0, 10),
-                                    rect.left + 20,
-                                    rect.top + 20 + (widget.inputEl.clientHeight / 2),
-                                    widget, // Pass widget explicitly
-                                    lastDoubleUnderscore
-                                );
-                            } else {
-                                autocomplete.hide();
-                            }
+                        if (matches.length > 0) {
+                            const rect = widget.inputEl.getBoundingClientRect();
+                            autocomplete.show(
+                                matches.slice(0, 20),
+                                rect.left + 20,
+                                rect.top + 20 + (widget.inputEl.clientHeight / 2),
+                                widget,
+                                triggerPos
+                            );
                         } else {
                             autocomplete.hide();
                         }
