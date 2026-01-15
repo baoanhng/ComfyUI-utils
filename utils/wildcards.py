@@ -4,29 +4,22 @@ import yaml
 from server import PromptServer
 from aiohttp import web
 
-def get_wildcards():
+def scan_wildcard_dir(wildcard_path):
     wildcards = []
-    
-    # Locate ComfyUI-Impact-Pack/custom_wildcards relative to this file
-    # This file is in .../custom_nodes/my-utils/utils/wildcards.py
-    # We need to go up 3 levels to get to custom_nodes
-    # custom_nodes/my-utils/utils -> .. -> my-utils -> .. -> custom_nodes
-    
-    base_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    impact_pack_path = os.path.join(base_path, "ComfyUI-Impact-Pack", "custom_wildcards")
-    
-    if not os.path.exists(impact_pack_path):
-        return []
+    if not os.path.exists(wildcard_path):
+        return wildcards
 
     # 1. Scan .txt files
-    txt_files = glob.glob(os.path.join(impact_pack_path, "*.txt"))
+    txt_files = glob.glob(os.path.join(wildcard_path, "**", "*.txt"), recursive=True)
     for f in txt_files:
-        filename = os.path.basename(f)
+        filename = os.path.relpath(f, wildcard_path)
         name, _ = os.path.splitext(filename)
+        # Normalize path separators for wildcard name
+        name = name.replace("\\", "/")
         wildcards.append(f"__{name}__")
 
     # 2. Scan .yaml files
-    yaml_files = glob.glob(os.path.join(impact_pack_path, "*.yaml"))
+    yaml_files = glob.glob(os.path.join(wildcard_path, "**", "*.yaml"), recursive=True)
     
     def parse_yaml_node(node, prefix=""):
         items = []
@@ -43,11 +36,32 @@ def get_wildcards():
             with open(f, 'r', encoding='utf-8') as file:
                 data = yaml.safe_load(file)
                 if data:
+                    # Get relative path of the yaml file to use as prefix if needed
+                    # Actually Impact Pack usually treats the key in YAML as the wildcard name
+                    # but some implementations might use the filename.
+                    # Looking at the original code, it didn't use the filename for YAML.
                     wildcards.extend(parse_yaml_node(data))
         except Exception as e:
             print(f"[TextJoiner] Error parsing YAML {f}: {e}")
             
-    return sorted(list(set(wildcards)))
+    return wildcards
+
+def get_wildcards():
+    all_wildcards = []
+    
+    # Locate paths relative to this file
+    # This file is in .../custom_nodes/my-utils/utils/wildcards.py
+    base_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    
+    # 1. Prioritize ComfyUI-Easy-Use
+    easy_use_path = os.path.join(base_path, "comfyui-easy-use", "wildcards")
+    all_wildcards.extend(scan_wildcard_dir(easy_use_path))
+    
+    # 2. ComfyUI-Impact-Pack
+    impact_pack_path = os.path.join(base_path, "comfyui-impact-pack", "custom_wildcards")
+    all_wildcards.extend(scan_wildcard_dir(impact_pack_path))
+    
+    return sorted(list(set(all_wildcards)))
 
 def setup_wildcard_api():
     @PromptServer.instance.routes.get("/my_utils/wildcards")

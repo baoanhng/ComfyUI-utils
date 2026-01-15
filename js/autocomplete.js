@@ -120,6 +120,13 @@ class AutocompletePopup {
                 endPos += 2;
             }
         }
+        // Smart cleanup for wildcards
+        else if (value.endsWith("__")) {
+            // If the user already typed "__" after the cursor, consume it.
+            if (after.startsWith("__")) {
+                endPos += 2;
+            }
+        }
 
         // Append comma and space as requested, ensuring no double comma from source
         // const finalValue = value + ", "; // Conflict with AutocompletePlus Node
@@ -127,7 +134,7 @@ class AutocompletePopup {
 
         // Critical: Trigger updates
         input.dispatchEvent(new Event("input", { bubbles: true }));
-        if (this.targetWidget.callback) {
+        if (this.targetWidget && this.targetWidget.callback) {
             this.targetWidget.callback(input.value);
         }
 
@@ -145,8 +152,8 @@ const BASE_RESOLUTIONS = [
     [832, 1216],
     [768, 1344],
     [640, 1536],
+    [1024, 1024],
     [1024, 1536],
-    [1024, 1024]
 ];
 
 // Generate Presets (Forward + Reverses)
@@ -207,8 +214,8 @@ app.registerExtension({
                         const cursor = widget.inputEl.selectionStart;
 
                         // Check Triggers proximity
-                        const lastWildcard = val.lastIndexOf("__", cursor);
-                        const lastSize = val.lastIndexOf("/*", cursor);
+                        const lastWildcard = val.lastIndexOf("__", cursor - 1);
+                        const lastSize = val.lastIndexOf("/*", cursor - 1);
 
                         // Pick the closest active trigger
                         let matches = [];
@@ -216,18 +223,26 @@ app.registerExtension({
 
                         // Check Size Trigger
                         // Must be closer than wildcard or wildcard not found
-                        if (lastSize !== -1 && (lastWildcard === -1 || lastSize > lastWildcard) && (cursor - lastSize) < 20) {
+                        if (lastSize !== -1 && cursor >= lastSize + 2 && (lastWildcard === -1 || lastSize > lastWildcard) && (cursor - lastSize) < 20) {
                             // Size query logic
-                            const query = val.substring(lastSize, cursor);
-                            // Simple contains check or startswith based on query
-                            // query starts with "/*", maybe "/* s", "/* size"...
-                            matches = SIZE_PRESETS.filter(s => s.toLowerCase().startsWith(query.toLowerCase()));
+                            let query = val.substring(lastSize + 2, cursor).trimStart().toLowerCase();
+                            // If user types "size: 1024", treat it as "1024" for broader matching
+                            if (query.startsWith("size:")) query = query.substring(5).trimStart();
+
+                            matches = SIZE_PRESETS.filter(s => {
+                                let content = s.slice(2, -2).trim().toLowerCase(); // Strip "/*" and "*/"
+                                if (content.startsWith("size:")) content = content.substring(5).trimStart();
+                                return content.includes(query);
+                            });
                             triggerPos = lastSize;
                         }
                         // Check Wildcard Trigger
-                        else if (lastWildcard !== -1 && (cursor - lastWildcard) < 50) {
-                            const query = val.substring(lastWildcard, cursor);
-                            matches = wildcardsCache.filter(w => w.toLowerCase().includes(query.toLowerCase()));
+                        else if (lastWildcard !== -1 && cursor >= lastWildcard + 2 && (cursor - lastWildcard) < 50) {
+                            const query = val.substring(lastWildcard + 2, cursor).toLowerCase();
+                            matches = wildcardsCache.filter(w => {
+                                const name = w.slice(2, -2).toLowerCase();
+                                return name.includes(query);
+                            });
                             triggerPos = lastWildcard;
                         }
 
