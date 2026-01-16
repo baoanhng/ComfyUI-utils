@@ -54,11 +54,11 @@ def get_wildcards():
     base_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     
     # 1. Prioritize ComfyUI-Easy-Use
-    easy_use_path = os.path.join(base_path, "comfyui-easy-use", "wildcards")
+    easy_use_path = os.path.join(base_path, "ComfyUI-Easy-Use", "wildcards")
     all_wildcards.extend(scan_wildcard_dir(easy_use_path))
     
     # 2. ComfyUI-Impact-Pack
-    impact_pack_path = os.path.join(base_path, "comfyui-impact-pack", "custom_wildcards")
+    impact_pack_path = os.path.join(base_path, "ComfyUI-Impact-Pack", "custom_wildcards")
     all_wildcards.extend(scan_wildcard_dir(impact_pack_path))
     
     return sorted(list(set(all_wildcards)))
