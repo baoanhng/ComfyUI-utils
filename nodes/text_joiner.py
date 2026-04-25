@@ -16,6 +16,8 @@ class TextJoinerNode:
             "optional": {
                 # Hidden input to receive JSON list from frontend
                 "data_payload": ("STRING", {"default": "[]", "multiline": False, "hidden": True}),
+                # Hidden input for per-slot disabled flags
+                "disabled_payload": ("STRING", {"default": "[]", "multiline": False, "hidden": True}),
                 # Optional list from Splitter
                 "import_list": ("STRING_LIST",), 
             },
@@ -30,8 +32,17 @@ class TextJoinerNode:
 
     CATEGORY = "utils"
 
-    def process_text(self, join_string, trim_whitespace, unique_id=None, data_payload="[]", import_list=None, **kwargs):
+    def process_text(self, join_string, trim_whitespace, unique_id=None, data_payload="[]", disabled_payload="[]", import_list=None, **kwargs):
         source_values = []
+        
+        # Parse disabled flags
+        disabled_flags = []
+        try:
+            disabled_flags = json.loads(disabled_payload)
+            if not isinstance(disabled_flags, list):
+                disabled_flags = []
+        except:
+            disabled_flags = []
         
         # 1. Parse Payload to understand current UI state
         payload_data = []
@@ -78,9 +89,14 @@ class TextJoinerNode:
                 if isinstance(text, str):
                     source_values.append(text)
 
-        # 3. Process Execution
+        # 3. Process Execution (skip disabled slots)
         final_texts = []
-        for text_value in source_values:
+        for idx, text_value in enumerate(source_values):
+            # Check if this slot is disabled
+            is_disabled = idx < len(disabled_flags) and disabled_flags[idx]
+            if is_disabled:
+                continue
+
             if text_value:
                 # Comma Strip logic (New Feature)
                 if trim_whitespace:

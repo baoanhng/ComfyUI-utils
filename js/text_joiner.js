@@ -57,6 +57,14 @@ app.registerExtension({
                     payloadWidget.draw = () => { };
                 }
 
+                // 1b. Setup Disabled Payload
+                let disabledPayloadWidget = node.widgets.find(w => w.name === "disabled_payload");
+                if (disabledPayloadWidget) {
+                    disabledPayloadWidget.type = "converted-widget";
+                    disabledPayloadWidget.computeSize = () => [0, -4];
+                    disabledPayloadWidget.draw = () => { };
+                }
+
                 // 2. Sync Logic
                 this.updatePayload = () => {
                     const texts = [];
@@ -73,7 +81,48 @@ app.registerExtension({
                     }
                 };
 
-                // 3. Create Widget Helper
+                // 2b. Disabled Payload Sync
+                this.updateDisabledPayload = () => {
+                    const flags = [];
+                    if (this.widgets) {
+                        const textWidgets = this.widgets
+                            .filter(w => w.name && w.name.startsWith("text_"))
+                            .sort((a, b) => parseInt(a.name.split("_")[1]) - parseInt(b.name.split("_")[1]));
+                        for (const tw of textWidgets) {
+                            const idx = parseInt(tw.name.split("_")[1]);
+                            const toggleW = this.widgets.find(w => w.name === `enabled_${idx}`);
+                            // disabled = !enabled
+                            flags.push(toggleW ? !toggleW.value : false);
+                        }
+                    }
+                    const dpWidget = this.widgets.find(w => w.name === "disabled_payload");
+                    if (dpWidget) dpWidget.value = JSON.stringify(flags);
+                };
+
+                // Helper: apply visual style for enabled/disabled
+                const applyToggleStyle = (textWidget, enabled) => {
+                    if (textWidget && textWidget.inputEl) {
+                        textWidget.inputEl.style.opacity = enabled ? "1" : "0.35";
+                        textWidget.inputEl.style.textDecoration = enabled ? "none" : "line-through";
+                    }
+                };
+
+                // 3. Create Widget Helpers
+                const createToggleWidget = (index) => {
+                    const name = `enabled_${index}`;
+                    const exists = node.widgets.find(w => w.name === name);
+                    if (exists) return exists;
+
+                    const toggle = node.addWidget("toggle", name, true, (v) => {
+                        const textWidget = node.widgets.find(w => w.name === `text_${index}`);
+                        applyToggleStyle(textWidget, v);
+                        node.updateDisabledPayload();
+                        node.setDirtyCanvas(true, true);
+                    }, { serialize: false });
+
+                    return toggle;
+                };
+
                 const createTextWidget = (index) => {
                     const name = `text_${index}`;
                     const exists = node.widgets.find(w => w.name === name);
@@ -92,6 +141,9 @@ app.registerExtension({
                     if (node.attachAutocomplete) {
                         node.attachAutocomplete(widget);
                     }
+
+                    // Create matching toggle
+                    createToggleWidget(index);
 
                     return widget;
                 };
@@ -115,6 +167,7 @@ app.registerExtension({
                     }
                     createTextWidget(maxIndex + 1);
                     node.updatePayload();
+                    node.updateDisabledPayload();
 
                     if (node.onResize) node.onResize(node.size);
                     const computed = node.computeSize();
@@ -157,9 +210,17 @@ app.registerExtension({
                             widgetToRemove.inputEl.parentNode.removeChild(widgetToRemove.inputEl);
                         }
 
-                        // Remove from array
+                        // Remove text widget from array
                         node.widgets.splice(maxWidgetIndex, 1);
+
+                        // Also remove the matching toggle widget
+                        const toggleIdx = node.widgets.findIndex(w => w.name === `enabled_${maxIndex}`);
+                        if (toggleIdx !== -1) {
+                            node.widgets.splice(toggleIdx, 1);
+                        }
+
                         node.updatePayload();
+                        node.updateDisabledPayload();
 
                         if (node.onResize) node.onResize(node.size);
                         const computed = node.computeSize();
@@ -177,13 +238,19 @@ app.registerExtension({
                         const rank = (w) => {
                             if (w.name === "join_string") return 0;
                             if (w.name === "trim_whitespace") return 1;
-                            if (w.name === "data_payload") return 9999;
+                            if (w.name === "data_payload") return 9998;
+                            if (w.name === "disabled_payload") return 9999;
                             if (w.label === "Add text box" || w.type === "button") return 2;
                             if (w.label === "Remove text box") return 3;
                             if (w.name && w.name.startsWith("text_")) {
                                 const parts = w.name.split("_");
                                 const idx = parseInt(parts[1]);
-                                return 100 + idx;
+                                return 100 + idx * 2;
+                            }
+                            if (w.name && w.name.startsWith("enabled_")) {
+                                const parts = w.name.split("_");
+                                const idx = parseInt(parts[1]);
+                                return 100 + idx * 2 + 1;
                             }
                             return 50;
                         };
@@ -194,6 +261,7 @@ app.registerExtension({
                 this.fixOrder();
                 setTimeout(() => this.fixOrder(), 50);
                 this.updatePayload();
+                this.updateDisabledPayload();
 
                 return r;
             };
@@ -206,16 +274,37 @@ app.registerExtension({
                 if (w && w.widgets_values && w.widgets_values.length > 0) {
                     const savedValues = w.widgets_values;
                     const lastVal = savedValues[savedValues.length - 1];
+                    // data_payload is second-to-last when disabled_payload exists
+                    const secondLastVal = savedValues.length > 1 ? savedValues[savedValues.length - 2] : null;
+
+                    // Try last value as data_payload first (backward compat)
                     let payloadTexts = [];
                     let isValidPayload = false;
+                    let payloadSource = lastVal;
 
-                    try {
-                        const parsed = JSON.parse(lastVal);
-                        if (Array.isArray(parsed)) {
-                            payloadTexts = parsed;
-                            isValidPayload = true;
-                        }
-                    } catch (e) { }
+                    // If second-to-last is a valid text array, it's the new format
+                    // (data_payload at second-to-last, disabled_payload at last)
+                    if (secondLastVal) {
+                        try {
+                            const parsed2 = JSON.parse(secondLastVal);
+                            if (Array.isArray(parsed2) && parsed2.length > 0 && typeof parsed2[0] === "string") {
+                                payloadTexts = parsed2;
+                                isValidPayload = true;
+                                payloadSource = secondLastVal;
+                            }
+                        } catch (e) { }
+                    }
+
+                    // Fallback: try last value (old format without disabled_payload)
+                    if (!isValidPayload) {
+                        try {
+                            const parsed = JSON.parse(lastVal);
+                            if (Array.isArray(parsed)) {
+                                payloadTexts = parsed;
+                                isValidPayload = true;
+                            }
+                        } catch (e) { }
+                    }
 
                     if (isValidPayload) {
                         const textCount = payloadTexts.length;
@@ -227,6 +316,19 @@ app.registerExtension({
                                 if (node.attachAutocomplete) {
                                     node.attachAutocomplete(widget);
                                 }
+                            }
+                            // Ensure toggle exists for each text widget
+                            const toggleName = `enabled_${i}`;
+                            if (!node.widgets.find(x => x.name === toggleName)) {
+                                node.addWidget("toggle", toggleName, true, (v) => {
+                                    const tw = node.widgets.find(x => x.name === `text_${i}`);
+                                    if (tw && tw.inputEl) {
+                                        tw.inputEl.style.opacity = v ? "1" : "0.35";
+                                        tw.inputEl.style.textDecoration = v ? "none" : "line-through";
+                                    }
+                                    if (node.updateDisabledPayload) node.updateDisabledPayload();
+                                    node.setDirtyCanvas(true, true);
+                                }, { serialize: false });
                             }
                         }
                     }
@@ -244,12 +346,31 @@ app.registerExtension({
                     const trimW = node.widgets.find(x => x.name === "trim_whitespace");
                     if (trimW) trimW.value = savedValues[1];
 
+                    // Detect format: new (data_payload, disabled_payload) or old (data_payload only)
                     const lastIdx = savedValues.length - 1;
-                    const payloadVal = savedValues[lastIdx];
+                    let payloadVal = savedValues[lastIdx];
+                    let disabledVal = "[]";
+
+                    // Check if second-to-last is data_payload (new format)
+                    if (lastIdx >= 1) {
+                        try {
+                            const candidate = JSON.parse(savedValues[lastIdx - 1]);
+                            const lastParsed = JSON.parse(savedValues[lastIdx]);
+                            if (Array.isArray(candidate) && candidate.length > 0 && typeof candidate[0] === "string"
+                                && Array.isArray(lastParsed) && (lastParsed.length === 0 || typeof lastParsed[0] === "boolean")) {
+                                payloadVal = savedValues[lastIdx - 1];
+                                disabledVal = savedValues[lastIdx];
+                            }
+                        } catch (e) { }
+                    }
 
                     const payloadW = node.widgets.find(x => x.name === "data_payload");
                     if (payloadW) payloadW.value = payloadVal;
 
+                    const disabledW = node.widgets.find(x => x.name === "disabled_payload");
+                    if (disabledW) disabledW.value = disabledVal;
+
+                    // Recover text values
                     try {
                         const texts = JSON.parse(payloadVal);
                         if (Array.isArray(texts)) {
@@ -258,6 +379,19 @@ app.registerExtension({
                                 const widget = node.widgets.find(x => x.name === widgetName);
                                 if (widget) {
                                     widget.value = txt;
+                                }
+                            });
+                        }
+                    } catch (e) { }
+
+                    // Recover disabled states
+                    try {
+                        const flags = JSON.parse(disabledVal);
+                        if (Array.isArray(flags)) {
+                            flags.forEach((disabled, i) => {
+                                const toggleW = node.widgets.find(x => x.name === `enabled_${i}`);
+                                if (toggleW) {
+                                    toggleW.value = !disabled;
                                 }
                             });
                         }
@@ -272,6 +406,13 @@ app.registerExtension({
                     payloadWidget.draw = () => { };
                 }
 
+                let disPayloadWidget = node.widgets.find(w => w.name === "disabled_payload");
+                if (disPayloadWidget) {
+                    disPayloadWidget.type = "converted-widget";
+                    disPayloadWidget.computeSize = () => [0, -4];
+                    disPayloadWidget.draw = () => { };
+                }
+
                 if (!this.updatePayload) {
                     this.updatePayload = () => {
                         const texts = [];
@@ -284,6 +425,24 @@ app.registerExtension({
                         }
                         const pWidget = node.widgets.find(w => w.name === "data_payload");
                         if (pWidget) pWidget.value = JSON.stringify(texts);
+                    };
+                }
+
+                if (!this.updateDisabledPayload) {
+                    this.updateDisabledPayload = () => {
+                        const flags = [];
+                        if (node.widgets) {
+                            const textWidgets = node.widgets
+                                .filter(w => w.name && w.name.startsWith("text_"))
+                                .sort((a, b) => parseInt(a.name.split("_")[1]) - parseInt(b.name.split("_")[1]));
+                            for (const tw of textWidgets) {
+                                const idx = parseInt(tw.name.split("_")[1]);
+                                const toggleW = node.widgets.find(w => w.name === `enabled_${idx}`);
+                                flags.push(toggleW ? !toggleW.value : false);
+                            }
+                        }
+                        const dpWidget = node.widgets.find(w => w.name === "disabled_payload");
+                        if (dpWidget) dpWidget.value = JSON.stringify(flags);
                     };
                 }
 
@@ -305,13 +464,19 @@ app.registerExtension({
                         const rank = (w) => {
                             if (w.name === "join_string") return 0;
                             if (w.name === "trim_whitespace") return 1;
-                            if (w.name === "data_payload") return 9999;
+                            if (w.name === "data_payload") return 9998;
+                            if (w.name === "disabled_payload") return 9999;
                             if (w.label === "Add text box" || w.type === "button") return 2;
                             if (w.label === "Remove text box") return 3;
                             if (w.name && w.name.startsWith("text_")) {
                                 const parts = w.name.split("_");
                                 const idx = parseInt(parts[1]);
-                                return 100 + idx;
+                                return 100 + idx * 2;
+                            }
+                            if (w.name && w.name.startsWith("enabled_")) {
+                                const parts = w.name.split("_");
+                                const idx = parseInt(parts[1]);
+                                return 100 + idx * 2 + 1;
                             }
                             return 50;
                         };
@@ -319,8 +484,21 @@ app.registerExtension({
                     });
                 }
 
+                // Apply visual styles for disabled toggles after DOM is ready
                 setTimeout(() => {
                     node.updatePayload();
+                    if (node.updateDisabledPayload) node.updateDisabledPayload();
+                    // Apply visual feedback
+                    for (const w of node.widgets) {
+                        if (w.name && w.name.startsWith("enabled_")) {
+                            const idx = parseInt(w.name.split("_")[1]);
+                            const tw = node.widgets.find(x => x.name === `text_${idx}`);
+                            if (tw && tw.inputEl) {
+                                tw.inputEl.style.opacity = w.value ? "1" : "0.35";
+                                tw.inputEl.style.textDecoration = w.value ? "none" : "line-through";
+                            }
+                        }
+                    }
                 }, 100);
             };
         }
