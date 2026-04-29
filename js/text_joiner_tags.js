@@ -56,7 +56,7 @@ if (!document.getElementById(STYLE_ID)) {
             display: inline-flex;
             align-items: center;
             gap: 3px;
-            padding: 1px 5px 1px 7px;
+            padding: 1px 5px 1px 5px;
             background: linear-gradient(135deg, #2a3a52, #2d3448);
             border: 1px solid #4a5a7a;
             border-radius: 10px;
@@ -69,9 +69,17 @@ if (!document.getElementById(STYLE_ID)) {
             transition: background 0.15s, border-color 0.15s;
             cursor: default;
         }
+        .mu-tag-chip.weighted {
+            background: linear-gradient(135deg, #3a3248, #3d2d40);
+            border-color: #6a5a7a;
+        }
         .mu-tag-chip:hover {
             background: linear-gradient(135deg, #354a66, #38405c);
             border-color: #6a7a9a;
+        }
+        .mu-tag-chip.weighted:hover {
+            background: linear-gradient(135deg, #4a3a58, #4d3550);
+            border-color: #7a6a8a;
         }
         .mu-tag-chip .mu-tag-text {
             flex: 1;
@@ -79,7 +87,12 @@ if (!document.getElementById(STYLE_ID)) {
             overflow: hidden;
             text-overflow: ellipsis;
         }
-        .mu-tag-chip .mu-tag-remove {
+        .mu-tag-chip .mu-tag-weight {
+            font-size: 9px;
+            color: #9a8aaa;
+            margin-left: -1px;
+        }
+        .mu-tag-chip .mu-tag-btn {
             display: flex;
             align-items: center;
             justify-content: center;
@@ -89,14 +102,22 @@ if (!document.getElementById(STYLE_ID)) {
             background: transparent;
             border: none;
             color: #6a7a9a;
-            font-size: 13px;
+            font-size: 12px;
             line-height: 1;
             cursor: pointer;
             padding: 0;
             flex-shrink: 0;
             transition: background 0.15s, color 0.15s;
         }
-        .mu-tag-chip .mu-tag-remove:hover {
+        .mu-tag-chip .mu-tag-btn.plus:hover {
+            background: rgba(80,200,120,0.2);
+            color: #66cc88;
+        }
+        .mu-tag-chip .mu-tag-btn.minus:hover {
+            background: rgba(200,160,80,0.2);
+            color: #ccaa66;
+        }
+        .mu-tag-chip .mu-tag-btn.remove:hover {
             background: rgba(255,80,80,0.25);
             color: #ff6666;
         }
@@ -231,6 +252,37 @@ function writeSections(node, allSections) {
     if (pw) pw.value = JSON.stringify(allSections);
 }
 
+// ─── Weight Utilities ────────────────────────────────────────────────────
+
+function parseWeight(tag) {
+    // Match (content) or (content:weight)
+    const m = tag.match(/^\((.+?)(?::(\d+\.?\d*))?\)$/);
+    if (m) {
+        return { content: m[1], weight: m[2] ? parseFloat(m[2]) : 1.1 };
+    }
+    return { content: tag, weight: 1.0 };
+}
+
+function formatWeighted(content, weight) {
+    // Round to 1 decimal
+    weight = Math.round(weight * 10) / 10;
+    if (weight < 1.05) return content; // bare keyword
+    if (Math.abs(weight - 1.1) < 0.001) return `(${content})`; // default = no number
+    return `(${content}:${weight.toFixed(1)})`;
+}
+
+function increaseWeight(tag) {
+    const { content, weight } = parseWeight(tag);
+    return formatWeighted(content, weight + 0.1);
+}
+
+function decreaseWeight(tag) {
+    const { content, weight } = parseWeight(tag);
+    const newW = weight - 0.1;
+    if (newW < 1.05) return content; // strip parens
+    return formatWeighted(content, newW);
+}
+
 // ─── Build one tag section ──────────────────────────────────────────────
 
 function buildSection(node, sectionIndex, onChanged) {
@@ -258,22 +310,56 @@ function buildSection(node, sectionIndex, onChanged) {
         const tags = sections[sectionIndex] || [];
 
         tags.forEach((text, idx) => {
-            const chip = document.createElement("span");
-            chip.className = "mu-tag-chip";
+            const { content, weight } = parseWeight(text);
+            const isWeighted = weight > 1.05;
 
+            const chip = document.createElement("span");
+            chip.className = "mu-tag-chip" + (isWeighted ? " weighted" : "");
+
+            // [−] button
+            const minusBtn = document.createElement("button");
+            minusBtn.className = "mu-tag-btn minus";
+            minusBtn.textContent = "−";
+            minusBtn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                if (weight <= 1.0) return; // already bare, no-op
+                mutate(tags => { tags[idx] = decreaseWeight(tags[idx]); });
+            });
+            chip.appendChild(minusBtn);
+
+            // Tag text
             const span = document.createElement("span");
             span.className = "mu-tag-text";
-            span.textContent = text;
+            span.textContent = content;
             chip.appendChild(span);
 
-            const btn = document.createElement("button");
-            btn.className = "mu-tag-remove";
-            btn.textContent = "×";
-            btn.addEventListener("click", (e) => {
+            // Weight badge (only if weighted)
+            if (isWeighted) {
+                const badge = document.createElement("span");
+                badge.className = "mu-tag-weight";
+                badge.textContent = weight.toFixed(1);
+                chip.appendChild(badge);
+            }
+
+            // [+] button
+            const plusBtn = document.createElement("button");
+            plusBtn.className = "mu-tag-btn plus";
+            plusBtn.textContent = "+";
+            plusBtn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                mutate(tags => { tags[idx] = increaseWeight(tags[idx]); });
+            });
+            chip.appendChild(plusBtn);
+
+            // [×] remove button
+            const removeBtn = document.createElement("button");
+            removeBtn.className = "mu-tag-btn remove";
+            removeBtn.textContent = "×";
+            removeBtn.addEventListener("click", (e) => {
                 e.stopPropagation();
                 removeTag(idx);
             });
-            chip.appendChild(btn);
+            chip.appendChild(removeBtn);
 
             container.insertBefore(chip, input);
         });
