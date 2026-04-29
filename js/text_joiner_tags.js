@@ -1,0 +1,506 @@
+import { app } from "../../scripts/app.js";
+import { api } from "../../scripts/api.js";
+
+const NUM_SECTIONS = 6;
+
+// ─── CSS ────────────────────────────────────────────────────────────────
+const STYLE_ID = "my-utils-tag-input-styles";
+if (!document.getElementById(STYLE_ID)) {
+    const style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = `
+        .mu-tag-section {
+            position: relative;
+            padding: 0 2px;
+        }
+        .mu-tag-label {
+            font-size: 9px;
+            color: #4a5068;
+            margin-bottom: 2px;
+            user-select: none;
+            font-family: 'Segoe UI', Arial, sans-serif;
+        }
+        .mu-tag-container {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: flex-start;
+            gap: 4px;
+            padding: 5px 7px;
+            min-height: 30px;
+            max-height: 100px;
+            overflow-y: auto;
+            background: #1a1a2e;
+            border: 1px solid #3a3a5c;
+            border-radius: 6px;
+            cursor: text;
+            box-sizing: border-box;
+            width: 100%;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            transition: border-color 0.2s;
+        }
+        .mu-tag-container::-webkit-scrollbar {
+            width: 4px;
+        }
+        .mu-tag-container::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .mu-tag-container::-webkit-scrollbar-thumb {
+            background: #3a3a5c;
+            border-radius: 2px;
+        }
+        .mu-tag-container:focus-within {
+            border-color: #6a7acc;
+            box-shadow: 0 0 0 1px rgba(106,122,204,0.25);
+        }
+        .mu-tag-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            padding: 1px 5px 1px 7px;
+            background: linear-gradient(135deg, #2a3a52, #2d3448);
+            border: 1px solid #4a5a7a;
+            border-radius: 10px;
+            color: #d0d8e8;
+            font-size: 11px;
+            line-height: 1.4;
+            max-width: 100%;
+            word-break: break-word;
+            user-select: none;
+            transition: background 0.15s, border-color 0.15s;
+            cursor: default;
+        }
+        .mu-tag-chip:hover {
+            background: linear-gradient(135deg, #354a66, #38405c);
+            border-color: #6a7a9a;
+        }
+        .mu-tag-chip .mu-tag-text {
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .mu-tag-chip .mu-tag-remove {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: transparent;
+            border: none;
+            color: #6a7a9a;
+            font-size: 13px;
+            line-height: 1;
+            cursor: pointer;
+            padding: 0;
+            flex-shrink: 0;
+            transition: background 0.15s, color 0.15s;
+        }
+        .mu-tag-chip .mu-tag-remove:hover {
+            background: rgba(255,80,80,0.25);
+            color: #ff6666;
+        }
+        .mu-tag-input {
+            flex: 1;
+            min-width: 60px;
+            border: none;
+            outline: none;
+            background: transparent;
+            color: #c8ccd4;
+            font-size: 11.5px;
+            font-family: inherit;
+            padding: 1px 0;
+            line-height: 1.4;
+        }
+        .mu-tag-input::placeholder {
+            color: #555a6a;
+            font-size: 10.5px;
+        }
+
+        /* Autocomplete popup */
+        .mu-tag-ac-popup {
+            position: absolute;
+            display: none;
+            z-index: 10001;
+            background: #1e1e2e;
+            border: 1px solid #3a3a5c;
+            border-radius: 6px;
+            max-height: 180px;
+            overflow-y: auto;
+            width: 320px;
+            box-shadow: 0 6px 20px rgba(0,0,0,0.5);
+            font-size: 12px;
+            font-family: 'Segoe UI', Arial, sans-serif;
+        }
+        .mu-tag-ac-item {
+            padding: 5px 10px;
+            cursor: pointer;
+            color: #c8ccd4;
+            border-bottom: 1px solid #2a2a3e;
+        }
+        .mu-tag-ac-item.selected {
+            background: #2a3a5c;
+        }
+    `;
+    document.head.appendChild(style);
+}
+
+// ─── Autocomplete Data ──────────────────────────────────────────────────
+let wildcardsCache = null;
+async function getWildcards() {
+    if (wildcardsCache !== null) return wildcardsCache;
+    try {
+        const resp = await fetch("/my_utils/wildcards");
+        if (!resp.ok) return [];
+        wildcardsCache = await resp.json();
+    } catch (e) { wildcardsCache = []; }
+    return wildcardsCache;
+}
+
+const BASE_RESOLUTIONS = [
+    [896, 1152], [832, 1216], [768, 1344],
+    [640, 1536], [1024, 1024], [1024, 1536],
+];
+const SIZE_PRESETS = [];
+BASE_RESOLUTIONS.forEach(([w, h]) => {
+    SIZE_PRESETS.push(`/* size: ${w}x${h} */`);
+    if (w !== h) SIZE_PRESETS.push(`/* size: ${h}x${w} */`);
+});
+
+// ─── Shared Autocomplete Popup ──────────────────────────────────────────
+const acEl = document.createElement("div");
+acEl.className = "mu-tag-ac-popup";
+document.body.appendChild(acEl);
+
+const acState = { items: [], selectedIndex: 0, onSelect: null, visible: false };
+
+function acShow(items, rect, onSelect) {
+    acState.items = items;
+    acState.selectedIndex = 0;
+    acState.onSelect = onSelect;
+    acState.visible = true;
+    acEl.innerHTML = "";
+    items.forEach((item, i) => {
+        const row = document.createElement("div");
+        row.className = "mu-tag-ac-item" + (i === 0 ? " selected" : "");
+        row.textContent = item;
+        row.addEventListener("click", () => acPick(item));
+        row.addEventListener("mouseenter", () => { acState.selectedIndex = i; acRender(); });
+        acEl.appendChild(row);
+    });
+    acEl.style.left = rect.left + "px";
+    acEl.style.top = (rect.bottom + 4) + "px";
+    acEl.style.display = "block";
+}
+function acHide() { acEl.style.display = "none"; acState.visible = false; acState.onSelect = null; }
+function acRender() {
+    Array.from(acEl.children).forEach((ch, i) => {
+        ch.className = "mu-tag-ac-item" + (i === acState.selectedIndex ? " selected" : "");
+    });
+}
+function acMoveDown() { acState.selectedIndex = (acState.selectedIndex + 1) % acState.items.length; acRender(); }
+function acMoveUp() { acState.selectedIndex = (acState.selectedIndex - 1 + acState.items.length) % acState.items.length; acRender(); }
+function acPick(item) {
+    if (acState.onSelect) acState.onSelect(item || acState.items[acState.selectedIndex]);
+    acHide();
+}
+function acPickSelected() { if (acState.items.length > 0) acPick(acState.items[acState.selectedIndex]); }
+
+document.addEventListener("click", (e) => {
+    if (acState.visible && !acEl.contains(e.target)) acHide();
+});
+
+// ─── Read/Write data_payload on the node ────────────────────────────────
+
+function readSections(node) {
+    const pw = node.widgets?.find(w => w.name === "data_payload");
+    if (!pw || !pw.value) return Array.from({ length: NUM_SECTIONS }, () => []);
+    try {
+        const parsed = JSON.parse(pw.value);
+        if (Array.isArray(parsed)) {
+            // Pad to NUM_SECTIONS
+            while (parsed.length < NUM_SECTIONS) parsed.push([]);
+            return parsed.map(s => Array.isArray(s) ? s : []);
+        }
+    } catch (e) { }
+    return Array.from({ length: NUM_SECTIONS }, () => []);
+}
+
+function writeSections(node, allSections) {
+    const pw = node.widgets?.find(w => w.name === "data_payload");
+    if (pw) pw.value = JSON.stringify(allSections);
+}
+
+// ─── Build one tag section ──────────────────────────────────────────────
+
+function buildSection(node, sectionIndex, onChanged) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "mu-tag-section";
+
+    const label = document.createElement("div");
+    label.className = "mu-tag-label";
+    label.textContent = `Section ${sectionIndex + 1}`;
+    wrapper.appendChild(label);
+
+    const container = document.createElement("div");
+    container.className = "mu-tag-container";
+    wrapper.appendChild(container);
+
+    const input = document.createElement("textarea");
+    input.className = "mu-tag-input comfy-multiline-input";
+    input.placeholder = "Type tag, press Enter…";
+    container.appendChild(input);
+
+    // ── Render from source of truth ──
+    function render() {
+        container.querySelectorAll(".mu-tag-chip").forEach(c => c.remove());
+        const sections = readSections(node);
+        const tags = sections[sectionIndex] || [];
+
+        tags.forEach((text, idx) => {
+            const chip = document.createElement("span");
+            chip.className = "mu-tag-chip";
+
+            const span = document.createElement("span");
+            span.className = "mu-tag-text";
+            span.textContent = text;
+            chip.appendChild(span);
+
+            const btn = document.createElement("button");
+            btn.className = "mu-tag-remove";
+            btn.textContent = "×";
+            btn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                removeTag(idx);
+            });
+            chip.appendChild(btn);
+
+            container.insertBefore(chip, input);
+        });
+    }
+
+    function mutate(fn) {
+        const sections = readSections(node);
+        fn(sections[sectionIndex]);
+        writeSections(node, sections);
+        render();
+        if (onChanged) onChanged();
+    }
+
+    function addTag(raw) {
+        const parts = raw.split(",").map(s => s.trim()).filter(Boolean);
+        if (parts.length === 0) return;
+        mutate(tags => parts.forEach(t => tags.push(t)));
+    }
+
+    function removeTag(idx) {
+        mutate(tags => tags.splice(idx, 1));
+    }
+
+    function setTags(newTags) {
+        const sections = readSections(node);
+        sections[sectionIndex] = [...newTags];
+        writeSections(node, sections);
+        render();
+    }
+
+    // ── Autocomplete ──
+    async function checkAutocomplete() {
+        const val = input.value;
+        const cursor = input.selectionStart;
+        const lastWC = val.lastIndexOf("__", cursor - 1);
+        const lastSZ = val.lastIndexOf("/*", cursor - 1);
+        let matches = [];
+
+        if (lastSZ !== -1 && cursor >= lastSZ + 2 && (lastWC === -1 || lastSZ > lastWC) && (cursor - lastSZ) < 25) {
+            let q = val.substring(lastSZ + 2, cursor).trimStart().toLowerCase();
+            if (q.startsWith("size:")) q = q.substring(5).trimStart();
+            matches = SIZE_PRESETS.filter(s => {
+                let c = s.slice(2, -2).trim().toLowerCase();
+                if (c.startsWith("size:")) c = c.substring(5).trimStart();
+                return c.includes(q);
+            });
+        } else if (lastWC !== -1 && cursor >= lastWC + 2 && (cursor - lastWC) < 50) {
+            const q = val.substring(lastWC + 2, cursor).toLowerCase();
+            const wc = await getWildcards();
+            matches = wc.filter(w => w.slice(2, -2).toLowerCase().includes(q));
+        }
+
+        if (matches.length > 0) {
+            const rect = input.getBoundingClientRect();
+            acShow(matches.slice(0, 15), rect, (selected) => {
+                input.value = "";
+                addTag(selected);
+                input.focus();
+            });
+        } else {
+            acHide();
+        }
+    }
+
+    // ── Input events ──
+    input.addEventListener("keydown", (e) => {
+        if (acState.visible) {
+            if (e.key === "ArrowDown") { e.preventDefault(); acMoveDown(); return; }
+            if (e.key === "ArrowUp") { e.preventDefault(); acMoveUp(); return; }
+            if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); acPickSelected(); return; }
+            if (e.key === "Escape") { e.preventDefault(); acHide(); return; }
+        }
+        if (e.key === "Enter") {
+            e.preventDefault();
+            const val = input.value.trim();
+            if (val) { addTag(val); input.value = ""; acHide(); }
+        }
+        if (e.key === "Backspace" && input.value === "") {
+            const sections = readSections(node);
+            const tags = sections[sectionIndex] || [];
+            if (tags.length > 0) removeTag(tags.length - 1);
+        }
+    });
+
+    input.addEventListener("input", () => {
+        const val = input.value;
+        if (val.includes(",")) {
+            const parts = val.split(",").map(s => s.trim()).filter(Boolean);
+            if (parts.length > 0) {
+                if (val.trimEnd().endsWith(",")) {
+                    parts.forEach(t => addTag(t));
+                    input.value = "";
+                } else {
+                    const complete = parts.slice(0, -1);
+                    complete.forEach(t => addTag(t));
+                    input.value = parts[parts.length - 1];
+                }
+            }
+        }
+        checkAutocomplete();
+    });
+
+    input.addEventListener("paste", (e) => {
+        e.preventDefault();
+        const text = (e.clipboardData || window.clipboardData).getData("text");
+        if (text) { addTag(text); input.value = ""; }
+    });
+
+    container.addEventListener("click", (e) => {
+        if (e.target === container) input.focus();
+    });
+
+    return { element: wrapper, render, setTags };
+}
+
+// ─── Extension ──────────────────────────────────────────────────────────
+
+app.registerExtension({
+    name: "MyUtils.TextJoinerTags",
+    async beforeRegisterNodeDef(nodeType, nodeData, app) {
+        if (nodeData.name !== "TextJoinerTags") return;
+
+        const onNodeCreated = nodeType.prototype.onNodeCreated;
+        nodeType.prototype.onNodeCreated = function () {
+            const r = onNodeCreated ? onNodeCreated.apply(this, arguments) : undefined;
+            const node = this;
+
+            // 1. Hide data_payload widget
+            const payloadWidget = node.widgets.find(w => w.name === "data_payload");
+            if (payloadWidget) {
+                payloadWidget.type = "converted-widget";
+                payloadWidget.computeSize = () => [0, -4];
+                payloadWidget.draw = () => { };
+            }
+
+            // 2. Resize helper — only grows, never shrinks
+            function resizeNode() {
+                requestAnimationFrame(() => {
+                    const sz = node.computeSize();
+                    node.setSize([
+                        Math.max(node.size[0], sz[0]),
+                        Math.max(node.size[1], sz[1])
+                    ]);
+                    node.setDirtyCanvas?.(true, true);
+                });
+            }
+
+            // 3. Build 5 sections
+            const sectionControllers = [];
+            for (let i = 0; i < NUM_SECTIONS; i++) {
+                const section = buildSection(node, i, resizeNode);
+                sectionControllers.push(section);
+                node.addDOMWidget(`tags_${i}`, "custom", section.element, {
+                    serialize: false,
+                });
+            }
+            node._sectionControllers = sectionControllers;
+
+            // 4. Backend → Frontend sync (splitter import)
+            const onUpdate = (event) => {
+                const data = event.detail;
+                if (data && data.node_id == node.id && data.sections) {
+                    const sections = data.sections;
+                    writeSections(node, sections);
+                    sectionControllers.forEach(sc => sc.render());
+                    resizeNode();
+                }
+            };
+            api.addEventListener("my_utils.text_joiner_tags.update", onUpdate);
+
+            const origOnRemoved = node.onRemoved;
+            node.onRemoved = function () {
+                if (origOnRemoved) origOnRemoved.apply(this, arguments);
+                api.removeEventListener("my_utils.text_joiner_tags.update", onUpdate);
+            };
+
+            // 5. Set minimum width
+            if (node.size[0] < 340) node.setSize([340, node.size[1]]);
+
+            return r;
+        };
+
+        // ── Save/Load ──
+        const onConfigure = nodeType.prototype.onConfigure;
+        nodeType.prototype.onConfigure = function (config) {
+            if (onConfigure) onConfigure.apply(this, arguments);
+            const node = this;
+
+            // Remember the saved node size so we can restore it
+            const savedSize = config?.size ? [...config.size] : null;
+
+            // Restore data_payload from saved widgets_values
+            if (config && config.widgets_values) {
+                const vals = config.widgets_values;
+                // data_payload is the last widget value
+                const payloadStr = vals[vals.length - 1];
+                if (payloadStr) {
+                    const pw = node.widgets?.find(w => w.name === "data_payload");
+                    if (pw) pw.value = payloadStr;
+                }
+            }
+
+            // Re-hide payload widget
+            const pw = node.widgets?.find(w => w.name === "data_payload");
+            if (pw) {
+                pw.type = "converted-widget";
+                pw.computeSize = () => [0, -4];
+                pw.draw = () => { };
+            }
+
+            // Re-render sections and restore node size
+            // Multiple passes to handle DOM readiness timing
+            const restoreSize = () => {
+                if (node._sectionControllers) {
+                    node._sectionControllers.forEach(sc => sc.render());
+                }
+                if (savedSize) {
+                    node.setSize(savedSize);
+                } else {
+                    const sz = node.computeSize();
+                    node.setSize([Math.max(node.size[0], sz[0]), sz[1]]);
+                }
+                node.setDirtyCanvas?.(true, true);
+            };
+
+            setTimeout(restoreSize, 50);
+            setTimeout(restoreSize, 200);
+        };
+    }
+});
