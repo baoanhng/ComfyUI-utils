@@ -327,10 +327,54 @@ function buildSection(node, sectionIndex, onChanged) {
             });
             chip.appendChild(minusBtn);
 
-            // Tag text
+            // Tag text (double-click to edit)
             const span = document.createElement("span");
             span.className = "mu-tag-text";
             span.textContent = content;
+            span.addEventListener("dblclick", (e) => {
+                e.stopPropagation();
+                // Replace chip internals with an inline edit input
+                const editInput = document.createElement("input");
+                editInput.type = "text";
+                editInput.value = text; // raw value with weight syntax
+                editInput.className = "mu-tag-edit";
+                Object.assign(editInput.style, {
+                    border: "none", outline: "none",
+                    background: "rgba(255,255,255,0.08)",
+                    color: "#e0e8f0", fontSize: "11px",
+                    fontFamily: "inherit", borderRadius: "4px",
+                    padding: "1px 4px", width: "100%",
+                    minWidth: "40px", maxWidth: "200px",
+                });
+
+                // Hide all other chip children, show input
+                Array.from(chip.children).forEach(ch => ch.style.display = "none");
+                chip.insertBefore(editInput, chip.firstChild);
+                editInput.focus();
+                editInput.select();
+
+                const finishEdit = (save) => {
+                    if (editInput._done) return;
+                    editInput._done = true;
+                    if (save) {
+                        const newVal = editInput.value.trim();
+                        if (newVal && newVal !== text) {
+                            mutate(tags => { tags[idx] = newVal; });
+                            return; // mutate calls render(), chip is rebuilt
+                        }
+                    }
+                    // Cancel: restore chip
+                    editInput.remove();
+                    Array.from(chip.children).forEach(ch => ch.style.display = "");
+                };
+
+                editInput.addEventListener("keydown", (ev) => {
+                    ev.stopPropagation();
+                    if (ev.key === "Enter") { ev.preventDefault(); finishEdit(true); }
+                    if (ev.key === "Escape") { ev.preventDefault(); finishEdit(false); }
+                });
+                editInput.addEventListener("blur", () => finishEdit(true));
+            });
             chip.appendChild(span);
 
             // Weight badge (only if weighted)
