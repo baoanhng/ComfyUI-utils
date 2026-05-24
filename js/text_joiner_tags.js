@@ -67,7 +67,15 @@ if (!document.getElementById(STYLE_ID)) {
             word-break: break-word;
             user-select: none;
             transition: background 0.15s, border-color 0.15s;
-            cursor: default;
+            cursor: grab;
+        }
+        .mu-tag-chip:active {
+            cursor: grabbing;
+        }
+        .mu-tag-chip.dragging {
+            opacity: 0.4;
+            border-style: dashed;
+            background: rgba(40, 50, 70, 0.5) !important;
         }
         .mu-tag-chip.weighted {
             background: linear-gradient(135deg, #3a3248, #3d2d40);
@@ -283,6 +291,27 @@ function decreaseWeight(tag) {
     return formatWeighted(content, newW);
 }
 
+// ─── Drag & Drop Utilities ───────────────────────────────────────────────
+let draggedChip = null;
+
+function getDragAfterElement(container, x, y) {
+    const draggableElements = [...container.querySelectorAll(".mu-tag-chip:not(.dragging)")];
+    if (draggableElements.length === 0) return null;
+    
+    return draggableElements.reduce((closest, child) => {
+        const box = child.getBoundingClientRect();
+        const centerX = box.left + box.width / 2;
+        const centerY = box.top + box.height / 2;
+        const distance = Math.hypot(x - centerX, y - centerY);
+        
+        if (distance < closest.distance) {
+            return { distance: distance, element: child };
+        } else {
+            return closest;
+        }
+    }, { distance: Infinity }).element;
+}
+
 // ─── Build one tag section ──────────────────────────────────────────────
 
 function buildSection(node, sectionIndex, onChanged) {
@@ -296,7 +325,65 @@ function buildSection(node, sectionIndex, onChanged) {
 
     const container = document.createElement("div");
     container.className = "mu-tag-container";
+    container._node = node;
     wrapper.appendChild(container);
+
+    // Prevent LiteGraph canvas panning/node dragging when clicking or interacting inside the container
+    container.addEventListener("mousedown", (e) => {
+        e.stopPropagation();
+    });
+
+    container.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        if (!draggedChip) return;
+        
+        e.dataTransfer.dropEffect = "move";
+        
+        // Find the chip element being hovered over (if any)
+        const targetChip = e.target.closest(".mu-tag-chip");
+        let target = null;
+        
+        if (targetChip) {
+            if (targetChip === draggedChip) return; // Hovering over ourselves: do nothing
+            
+            const box = targetChip.getBoundingClientRect();
+            const centerX = box.left + box.width / 2;
+            const centerY = box.top + box.height / 2;
+            const isAfter = (e.clientY > box.bottom) || (e.clientY >= box.top && e.clientX > centerX);
+            
+            target = isAfter ? targetChip.nextSibling : targetChip;
+        } else {
+            // Hovering over container background or input
+            const closest = getDragAfterElement(container, e.clientX, e.clientY);
+            if (closest) {
+                const box = closest.getBoundingClientRect();
+                const centerX = box.left + box.width / 2;
+                const centerY = box.top + box.height / 2;
+                const isAfter = (e.clientY > box.bottom) || (e.clientY >= box.top && e.clientX > centerX);
+                
+                target = isAfter ? closest.nextSibling : closest;
+            } else {
+                target = input;
+            }
+        }
+        
+        // Only insert if the target has actually changed and isn't already adjacent to the dragged chip.
+        // This avoids layout flip-flopping (oscillations) that cause flashing.
+        if (target && draggedChip !== target && draggedChip.nextSibling !== target) {
+            container.insertBefore(draggedChip, target);
+        }
+    });
+
+    container.addEventListener("drop", (e) => {
+        e.preventDefault();
+        const sourceNode = draggedChip?._node;
+        const targetNode = container._node;
+        if (sourceNode?.updateAllSectionsFromDOM) sourceNode.updateAllSectionsFromDOM();
+        if (targetNode && targetNode !== sourceNode && targetNode.updateAllSectionsFromDOM) {
+            targetNode.updateAllSectionsFromDOM();
+        }
+        draggedChip = null;
+    });
 
     const input = document.createElement("textarea");
     input.className = "mu-tag-input comfy-multiline-input";
@@ -315,11 +402,35 @@ function buildSection(node, sectionIndex, onChanged) {
 
             const chip = document.createElement("span");
             chip.className = "mu-tag-chip" + (isWeighted ? " weighted" : "");
+            chip.setAttribute("draggable", "true");
+            chip._tagValue = text;
+            chip._node = node;
+
+            chip.addEventListener("dragstart", (e) => {
+                e.stopPropagation();
+                chip.classList.add("dragging");
+                draggedChip = chip;
+                e.dataTransfer.effectAllowed = "move";
+                e.dataTransfer.setData("text/plain", text);
+            });
+
+            chip.addEventListener("dragend", (e) => {
+                e.stopPropagation();
+                chip.classList.remove("dragging");
+                const sourceNode = draggedChip?._node || node;
+                const targetNode = chip.parentElement?._node;
+                if (sourceNode?.updateAllSectionsFromDOM) sourceNode.updateAllSectionsFromDOM();
+                if (targetNode && targetNode !== sourceNode && targetNode.updateAllSectionsFromDOM) {
+                    targetNode.updateAllSectionsFromDOM();
+                }
+                draggedChip = null;
+            });
 
             // [−] button
             const minusBtn = document.createElement("button");
             minusBtn.className = "mu-tag-btn minus";
             minusBtn.textContent = "−";
+            minusBtn.setAttribute("draggable", "false");
             minusBtn.addEventListener("click", (e) => {
                 e.stopPropagation();
                 if (weight <= 1.0) return; // already bare, no-op
@@ -333,6 +444,8 @@ function buildSection(node, sectionIndex, onChanged) {
             span.textContent = content;
             span.addEventListener("dblclick", (e) => {
                 e.stopPropagation();
+                chip.setAttribute("draggable", "false"); // Disable drag during edit
+                
                 // Replace chip internals with an inline edit input
                 const editInput = document.createElement("input");
                 editInput.type = "text";
@@ -363,8 +476,9 @@ function buildSection(node, sectionIndex, onChanged) {
                             return; // mutate calls render(), chip is rebuilt
                         }
                     }
-                    // Cancel: restore chip
+                    // Cancel: restore chip and re-enable drag
                     editInput.remove();
+                    chip.setAttribute("draggable", "true");
                     Array.from(chip.children).forEach(ch => ch.style.display = "");
                 };
 
@@ -389,6 +503,7 @@ function buildSection(node, sectionIndex, onChanged) {
             const plusBtn = document.createElement("button");
             plusBtn.className = "mu-tag-btn plus";
             plusBtn.textContent = "+";
+            plusBtn.setAttribute("draggable", "false");
             plusBtn.addEventListener("click", (e) => {
                 e.stopPropagation();
                 mutate(tags => { tags[idx] = increaseWeight(tags[idx]); });
@@ -399,6 +514,7 @@ function buildSection(node, sectionIndex, onChanged) {
             const removeBtn = document.createElement("button");
             removeBtn.className = "mu-tag-btn remove";
             removeBtn.textContent = "×";
+            removeBtn.setAttribute("draggable", "false");
             removeBtn.addEventListener("click", (e) => {
                 e.stopPropagation();
                 removeTag(idx);
@@ -551,7 +667,18 @@ app.registerExtension({
                 });
             }
 
-            // 3. Build 5 sections
+            node.updateAllSectionsFromDOM = function () {
+                const sections = [];
+                node._sectionControllers.forEach((sc) => {
+                    const chips = [...sc.element.querySelectorAll(".mu-tag-chip")];
+                    sections.push(chips.map(c => c._tagValue).filter(Boolean));
+                });
+                writeSections(node, sections);
+                node._sectionControllers.forEach(sc => sc.render());
+                resizeNode();
+            };
+
+            // 3. Build sections
             const sectionControllers = [];
             for (let i = 0; i < NUM_SECTIONS; i++) {
                 const section = buildSection(node, i, resizeNode);
