@@ -19,30 +19,47 @@ class AutocompletePopup {
         Object.assign(this.element.style, {
             position: "absolute",
             display: "none",
-            backgroundColor: "#222",
-            border: "1px solid #444",
+            backgroundColor: "rgba(34, 34, 34, 0.9)",
+            backdropFilter: "blur(10px)",
+            border: "1px solid rgba(255, 255, 255, 0.1)",
+            borderRadius: "6px",
             zIndex: "10000",
             maxHeight: "200px",
             overflowY: "auto",
             width: "400px",
-            boxShadow: "0 4px 6px rgba(0,0,0,0.3)"
+            boxShadow: "0 8px 32px 0 rgba(0, 0, 0, 0.37)"
         });
         document.body.appendChild(this.element);
+
+        // Prevent the textarea from losing focus/selection when clicking on the popup
+        this.element.addEventListener("mousedown", (e) => {
+            e.preventDefault();
+        });
 
         this.visible = false;
         this.selectedIndex = 0;
         this.items = [];
         this.targetWidget = null;
         this.triggerPos = 0;
+        this.triggerEndPos = null;
+        this.mode = "normal"; // "normal" or "weight"
     }
 
-    show(items, x, y, widget, triggerPos) {
+    show(items, x, y, widget, triggerPos, mode = "normal", triggerEndPos = null) {
         this.items = items;
         this.targetWidget = widget;
         this.triggerPos = triggerPos;
+        this.triggerEndPos = triggerEndPos;
+        this.mode = mode;
         this.selectedIndex = 0;
 
         this.element.innerHTML = "";
+
+        if (mode === "weight") {
+            this.element.style.width = "100px";
+        } else {
+            this.element.style.width = "400px";
+        }
 
         // Close Button
         const closeBtn = document.createElement("div");
@@ -57,7 +74,9 @@ class AutocompletePopup {
             fontSize: "14px",
             fontWeight: "bold",
             zIndex: "10001",
-            backgroundColor: "rgba(0,0,0,0.5)"
+            backgroundColor: "rgba(0,0,0,0.5)",
+            borderBottomLeftRadius: "4px",
+            borderTopRightRadius: "6px"
         });
         closeBtn.addEventListener("click", (e) => {
             e.stopPropagation();
@@ -70,9 +89,14 @@ class AutocompletePopup {
         items.forEach((item, idx) => {
             const div = document.createElement("div");
             div.textContent = item;
-            div.style.padding = "4px 8px";
-            div.style.cursor = "pointer";
-            div.style.color = "#ddd";
+            Object.assign(div.style, {
+                padding: "6px 12px",
+                cursor: "pointer",
+                color: "#ddd",
+                transition: "background-color 0.1s ease, color 0.1s ease",
+                fontFamily: "sans-serif",
+                fontSize: "12px"
+            });
             div.addEventListener("click", () => this.select(item));
             div.addEventListener("mouseenter", () => {
                 this.selectedIndex = idx;
@@ -92,11 +116,17 @@ class AutocompletePopup {
         this.element.style.display = "none";
         this.visible = false;
         this.targetWidget = null;
+        this.mode = "normal";
+        this.triggerEndPos = null;
     }
 
     render() {
+        // Skip the close button which is element.children[0]
         Array.from(this.element.children).forEach((child, idx) => {
-            child.style.backgroundColor = idx === this.selectedIndex ? "#444" : "transparent";
+            if (idx === 0) return; // skip closeBtn
+            const itemIdx = idx - 1;
+            child.style.backgroundColor = itemIdx === this.selectedIndex ? "rgba(255, 255, 255, 0.15)" : "transparent";
+            child.style.color = itemIdx === this.selectedIndex ? "#fff" : "#ddd";
         });
     }
 
@@ -105,32 +135,52 @@ class AutocompletePopup {
 
         const input = this.targetWidget.inputEl;
         const text = input.value;
-        // const before = text.substring(0, this.triggerPos);
-        const after = text.substring(input.selectionEnd);
+        const startPos = this.triggerPos;
+        let endPos = this.triggerEndPos !== null ? this.triggerEndPos : input.selectionEnd;
 
-        let endPos = input.selectionEnd;
-
-        // Smart cleanup for comment syntax
-        if (value.endsWith("*/")) {
-            // If the user already typed "*/" after the cursor, consume it.
-            if (after.trim().startsWith("*/")) {
-                const offset = after.indexOf("*/");
-                endPos += offset + 2;
-            } else if (after.startsWith("*/")) {
-                endPos += 2;
+        if (this.mode === "weight") {
+            const selectedText = text.substring(startPos, endPos);
+            const leadingSpaces = selectedText.match(/^\s*/)[0];
+            const trailingSpaces = selectedText.match(/\s*$/)[0];
+            const trimmed = selectedText.trim();
+            const match = trimmed.match(/^\((.+):([0-9.]+)\)$/);
+            
+            let baseText = trimmed;
+            if (match) {
+                baseText = match[1];
             }
-        }
-        // Smart cleanup for wildcards
-        else if (value.endsWith("__")) {
-            // If the user already typed "__" after the cursor, consume it.
-            if (after.startsWith("__")) {
-                endPos += 2;
+            
+            let replacement = "";
+            if (value === "0") {
+                replacement = leadingSpaces + baseText + trailingSpaces;
+            } else {
+                replacement = leadingSpaces + `(${baseText}:${value})` + trailingSpaces;
             }
-        }
+            
+            input.setRangeText(replacement, startPos, endPos, "end");
+        } else {
+            const after = text.substring(endPos);
 
-        // Append comma and space as requested, ensuring no double comma from source
-        // const finalValue = value + ", "; // Conflict with AutocompletePlus Node
-        input.setRangeText(value, this.triggerPos, endPos, "end");
+            // Smart cleanup for comment syntax
+            if (value.endsWith("*/")) {
+                // If the user already typed "*/" after the cursor, consume it.
+                if (after.trim().startsWith("*/")) {
+                    const offset = after.indexOf("*/");
+                    endPos += offset + 2;
+                } else if (after.startsWith("*/")) {
+                    endPos += 2;
+                }
+            }
+            // Smart cleanup for wildcards
+            else if (value.endsWith("__")) {
+                // If the user already typed "__" after the cursor, consume it.
+                if (after.startsWith("__")) {
+                    endPos += 2;
+                }
+            }
+
+            input.setRangeText(value, startPos, endPos, "end");
+        }
 
         // Critical: Trigger updates
         input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -258,6 +308,49 @@ app.registerExtension({
                         } else {
                             autocomplete.hide();
                         }
+                    });
+
+                    const checkSelection = (e) => {
+                        const input = widget.inputEl;
+                        if (!input) return;
+
+                        const start = input.selectionStart;
+                        const end = input.selectionEnd;
+
+                        if (start === end) {
+                            if (autocomplete.visible && autocomplete.mode === "weight") {
+                                autocomplete.hide();
+                            }
+                            return;
+                        }
+
+                        const selectedText = input.value.substring(start, end);
+                        if (!selectedText.trim()) return;
+
+                        // Predefined weight values: 0.4, 0.5, 1.1, 1.2, 0
+                        const items = ["0.4", "0.5", "1.1", "1.2", "0"];
+
+                        const rect = input.getBoundingClientRect();
+                        autocomplete.show(
+                            items,
+                            rect.left + 20,
+                            rect.top + 20 + (input.clientHeight / 2),
+                            widget,
+                            start,
+                            "weight",
+                            end
+                        );
+                    };
+
+                    widget.inputEl.addEventListener("mouseup", checkSelection);
+                    widget.inputEl.addEventListener("keyup", checkSelection);
+
+                    widget.inputEl.addEventListener("blur", () => {
+                        setTimeout(() => {
+                            if (document.activeElement !== widget.inputEl) {
+                                autocomplete.hide();
+                            }
+                        }, 150);
                     });
                 };
 
