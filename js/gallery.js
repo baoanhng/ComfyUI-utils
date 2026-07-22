@@ -188,6 +188,21 @@ const galleryStyles = `
     background: #3f3f46;
 }
 
+.gallery-clear-btn {
+    background: #27272a;
+    border: 1px solid #3f3f46;
+    color: #a1a1aa;
+    border-radius: 6px;
+    padding: 5px 8px;
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.gallery-clear-btn:hover {
+    color: #f87171;
+    background: #451a1a;
+}
+
 .gallery-content {
     flex: 1;
     overflow-y: auto;
@@ -443,26 +458,11 @@ const galleryStyles = `
 }
 `;
 
-function isFolderMatch(imgSubfolder, activeFolder) {
-    if (!activeFolder) return true;
-    
-    const normalize = (path) => {
-        if (!path) return "";
-        let s = path.trim().replace(/\\/g, "/").replace(/\/+$/, "");
-        if (s.toLowerCase() === "output" || s.toLowerCase().endsWith("/output")) return "";
-        return s.toLowerCase();
-    };
-
-    const s1 = normalize(imgSubfolder);
-    const s2 = normalize(activeFolder);
-    return s1 === s2;
-}
-
 class CustomGalleryPanel {
     constructor() {
-        this.currentFolder = ""; // Empty string defaults to ComfyUI base output directory
+        this.currentFolder = ""; // Default folder path
         this.viewMode = "thumbnail"; // "thumbnail" or "list"
-        this.images = []; // Pure in-memory display engine (no file renaming or disk mutation!)
+        this.images = []; // Pure in-memory display array (retains all imported & generated images)
         this.draggedIndex = null;
         this.currentModalIndex = -1;
 
@@ -502,7 +502,8 @@ class CustomGalleryPanel {
                             <button class="gallery-mode-btn active" id="mode-btn-thumb" title="Thumbnail View (3 cols, max 100px)">▦</button>
                             <button class="gallery-mode-btn" id="mode-btn-list" title="List View (1 col, max 300px)">☰</button>
                         </div>
-                        <button class="gallery-refresh-btn" id="gallery-refresh-btn" title="Refresh Images">🔄</button>
+                        <button class="gallery-refresh-btn" id="gallery-refresh-btn" title="Merge & Refresh Folder Images">🔄</button>
+                        <button class="gallery-clear-btn" id="gallery-clear-btn" title="Clear View (Reset Gallery)">🧹</button>
                     </div>
                 </div>
             </div>
@@ -666,6 +667,15 @@ class CustomGalleryPanel {
             this.fetchImages();
         });
 
+        // Clear View Button
+        this.panel.querySelector("#gallery-clear-btn").addEventListener("click", () => {
+            if (confirm("Reset in-memory gallery view?")) {
+                this.images = [];
+                this.saveStateToLocalStorage();
+                this.fetchImages();
+            }
+        });
+
         // View Mode Toggle Buttons
         const thumbBtn = this.panel.querySelector("#mode-btn-thumb");
         const listBtn = this.panel.querySelector("#mode-btn-list");
@@ -763,20 +773,20 @@ class CustomGalleryPanel {
                 for (const img of imgList) {
                     if (!img.type || img.type === "output") {
                         const imgSubfolder = img.subfolder || "";
-                        if (isFolderMatch(imgSubfolder, this.currentFolder)) {
-                            const exists = this.images.some(i => i.filename === img.filename && (i.subfolder || "") === imgSubfolder);
-                            if (!exists) {
-                                // Prepend newly generated image to top of in-memory array
-                                this.images.unshift({
-                                    filename: img.filename,
-                                    subfolder: imgSubfolder,
-                                    full_path: "",
-                                    is_in_output: true,
-                                    mtime: Date.now() / 1000,
-                                    size: 0
-                                });
-                                addedAny = true;
-                            }
+                        const key = img.full_path || (imgSubfolder ? imgSubfolder + "/" + img.filename : img.filename);
+                        const exists = this.images.some(i => (i.full_path || (i.subfolder ? i.subfolder + "/" + i.filename : i.filename)) === key);
+
+                        if (!exists) {
+                            // Prepend newly generated image to top of in-memory array
+                            this.images.unshift({
+                                filename: img.filename,
+                                subfolder: imgSubfolder,
+                                full_path: img.full_path || "",
+                                is_in_output: true,
+                                mtime: Date.now() / 1000,
+                                size: 0
+                            });
+                            addedAny = true;
                         }
                     }
                 }
@@ -856,10 +866,26 @@ class CustomGalleryPanel {
                 console.error("[Gallery] Backend message:", data.error);
             }
 
-            const fetchedImages = data.images || [];
+            const serverImages = data.images || [];
 
-            // Restore custom in-memory reorder state from localStorage if available
-            this.images = this.applyLocalStorageOrder(fetchedImages);
+            // MERGE: Keep existing manually imported/custom items in memory!
+            const existingMap = new Map();
+            this.images.forEach(img => {
+                const key = img.full_path || img.objectUrl || (img.subfolder ? img.subfolder + "/" + img.filename : img.filename);
+                existingMap.set(key, img);
+            });
+
+            // Add newly scanned server images that aren't in memory yet
+            serverImages.forEach(sImg => {
+                const key = sImg.full_path || (sImg.subfolder ? sImg.subfolder + "/" + sImg.filename : sImg.filename);
+                if (!existingMap.has(key)) {
+                    existingMap.set(key, sImg);
+                }
+            });
+
+            // Convert back to array and apply custom ordering
+            const mergedList = Array.from(existingMap.values());
+            this.images = this.applyLocalStorageOrder(mergedList);
 
             // Update subfolders dropdown
             this.select.innerHTML = "";
@@ -878,6 +904,7 @@ class CustomGalleryPanel {
                 }
             });
 
+            this.saveStateToLocalStorage();
             this.renderGrid();
         } catch (e) {
             console.error("[Gallery] Failed to fetch images:", e);
@@ -886,8 +913,8 @@ class CustomGalleryPanel {
 
     saveStateToLocalStorage() {
         try {
-            const key = `my_utils_gallery_order_${this.currentFolder || "root"}`;
-            const order = this.images.map(img => img.full_path || img.objectUrl || img.filename);
+            const key = `my_utils_gallery_order_main`;
+            const order = this.images.map(img => img.full_path || img.objectUrl || (img.subfolder ? img.subfolder + "/" + img.filename : img.filename));
             localStorage.setItem(key, JSON.stringify(order));
         } catch (e) {
             console.warn("[Gallery] Failed to save order to localStorage:", e);
@@ -896,7 +923,7 @@ class CustomGalleryPanel {
 
     applyLocalStorageOrder(images) {
         try {
-            const key = `my_utils_gallery_order_${this.currentFolder || "root"}`;
+            const key = `my_utils_gallery_order_main`;
             const saved = localStorage.getItem(key);
             if (!saved) return images;
 
@@ -907,9 +934,9 @@ class CustomGalleryPanel {
             order.forEach((id, idx) => orderMap.set(id, idx));
 
             images.sort((a, b) => {
-                const idA = a.full_path || a.filename;
-                const idB = b.full_path || b.filename;
-                
+                const idA = a.full_path || a.objectUrl || (a.subfolder ? a.subfolder + "/" + a.filename : a.filename);
+                const idB = b.full_path || b.objectUrl || (b.subfolder ? b.subfolder + "/" + b.filename : b.filename);
+
                 const hasA = orderMap.has(idA);
                 const hasB = orderMap.has(idB);
 
@@ -917,7 +944,7 @@ class CustomGalleryPanel {
                     return orderMap.get(idA) - orderMap.get(idB);
                 }
                 if (!hasA && hasB) {
-                    return -1; // Unordered/new image pops up at the top!
+                    return -1; // Unordered / newly generated image goes to the top!
                 }
                 if (hasA && !hasB) {
                     return 1;
