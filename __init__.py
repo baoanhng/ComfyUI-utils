@@ -2,9 +2,11 @@ from .nodes.text_joiner import TextJoinerNode
 from .nodes.text_joiner_tags import TextJoinerTagsNode
 from .nodes.text_splitter import TextSplitterNode
 from .utils.wildcards import setup_wildcard_api
+from .utils.gallery import setup_gallery_api
 
 # Initialize API Routes
 setup_wildcard_api()
+setup_gallery_api()
 
 NODE_CLASS_MAPPINGS = {
     "TextJoiner": TextJoinerNode,
