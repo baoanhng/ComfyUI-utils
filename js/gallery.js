@@ -339,14 +339,16 @@ const galleryStyles = `
     position: fixed;
     top: 0; left: 0; right: 0; bottom: 0;
     z-index: 10010;
-    background: rgba(0,0,0,0.85);
-    backdrop-filter: blur(4px);
+    background: rgba(0, 0, 0, 0.88);
+    backdrop-filter: blur(8px);
     display: flex;
-    justify-content: center;
+    justify-content: space-between;
     align-items: center;
+    padding: 20px;
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.2s ease;
+    user-select: none;
 }
 
 #my-utils-gallery-modal.show {
@@ -354,11 +356,81 @@ const galleryStyles = `
     pointer-events: auto;
 }
 
-#my-utils-gallery-modal img {
-    max-width: 90vw;
+.modal-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    max-width: calc(100vw - 160px);
     max-height: 90vh;
+}
+
+#my-utils-gallery-modal img#modal-img {
+    max-width: calc(100vw - 160px);
+    max-height: 80vh;
+    object-fit: contain;
     border-radius: 8px;
     box-shadow: 0 8px 32px rgba(0,0,0,0.8);
+}
+
+.modal-caption {
+    margin-top: 12px;
+    font-size: 13px;
+    color: #e4e4e7;
+    background: rgba(24, 24, 27, 0.85);
+    padding: 6px 16px;
+    border-radius: 20px;
+    border: 1px solid #3f3f46;
+    text-align: center;
+    word-break: break-all;
+}
+
+.modal-nav-btn {
+    background: rgba(39, 39, 42, 0.7);
+    border: 1px solid #3f3f46;
+    color: #f4f4f5;
+    font-size: 22px;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+    z-index: 10012;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+}
+
+.modal-nav-btn:hover {
+    background: #4f46e5;
+    border-color: #6366f1;
+    transform: scale(1.1);
+    color: #ffffff;
+}
+
+.modal-close-btn {
+    position: absolute;
+    top: 20px;
+    right: 24px;
+    background: rgba(39, 39, 42, 0.7);
+    border: 1px solid #3f3f46;
+    color: #f4f4f5;
+    font-size: 18px;
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10012;
+    transition: all 0.15s ease;
+}
+
+.modal-close-btn:hover {
+    background: #ef4444;
+    border-color: #f87171;
 }
 `;
 
@@ -368,6 +440,7 @@ class CustomGalleryPanel {
         this.viewMode = "thumbnail"; // "thumbnail" or "list"
         this.images = [];
         this.draggedIndex = null;
+        this.currentModalIndex = -1;
 
         this.initCSS();
         this.initDOM();
@@ -425,10 +498,18 @@ class CustomGalleryPanel {
         `;
         document.body.appendChild(this.contextMenu);
 
-        // Lightbox Modal DOM
+        // Lightbox Modal DOM with Prev/Next Navigation
         this.modal = document.createElement("div");
         this.modal.id = "my-utils-gallery-modal";
-        this.modal.innerHTML = `<img id="modal-img" src="" alt="Full view" />`;
+        this.modal.innerHTML = `
+            <button class="modal-nav-btn prev" id="modal-prev-btn" title="Previous Image (Left Arrow)">❮</button>
+            <div class="modal-container">
+                <img id="modal-img" src="" alt="Full view" />
+                <div class="modal-caption" id="modal-caption"></div>
+            </div>
+            <button class="modal-nav-btn next" id="modal-next-btn" title="Next Image (Right Arrow)">❯</button>
+            <button class="modal-close-btn" id="modal-close-btn" title="Close (Esc)">✕</button>
+        `;
         document.body.appendChild(this.modal);
 
         this.grid = this.panel.querySelector("#gallery-grid");
@@ -586,15 +667,53 @@ class CustomGalleryPanel {
             this.contextMenu.style.display = "none";
         });
 
-        // Modal Close
-        this.modal.addEventListener("click", () => {
-            this.modal.classList.remove("show");
+        // Modal Controls & Event Handlers
+        const prevBtn = this.modal.querySelector("#modal-prev-btn");
+        const nextBtn = this.modal.querySelector("#modal-next-btn");
+        const closeBtn = this.modal.querySelector("#modal-close-btn");
+
+        prevBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            this.showPrevImage();
+        });
+
+        nextBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            this.showNextImage();
+        });
+
+        closeBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            this.closeModal();
+        });
+
+        this.modal.addEventListener("click", (e) => {
+            if (e.target === this.modal || e.target.classList.contains("modal-container")) {
+                this.closeModal();
+            }
+        });
+
+        // Keyboard Arrow & Esc listener for Modal Navigation
+        document.addEventListener("keydown", (e) => {
+            if (this.modal.classList.contains("show")) {
+                if (e.key === "ArrowLeft") {
+                    e.preventDefault();
+                    this.showPrevImage();
+                } else if (e.key === "ArrowRight") {
+                    e.preventDefault();
+                    this.showNextImage();
+                } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    this.closeModal();
+                }
+            }
         });
 
         // Context Menu Action Handlers
         this.contextMenu.querySelector("#ctx-view").addEventListener("click", () => {
             if (this.activeContextItem) {
-                this.openModal(this.activeContextItem);
+                const idx = this.images.indexOf(this.activeContextItem);
+                this.openModal(idx >= 0 ? idx : this.activeContextItem);
             }
         });
 
@@ -762,7 +881,7 @@ class CustomGalleryPanel {
             // Click to open fullsize preview
             card.addEventListener("click", (e) => {
                 if (e.button === 0) { // Left click
-                    this.openModal(img);
+                    this.openModal(idx);
                 }
             });
 
@@ -816,11 +935,51 @@ class CustomGalleryPanel {
         this.contextMenu.style.display = "block";
     }
 
-    openModal(img) {
+    openModal(target) {
+        if (!this.images || this.images.length === 0) return;
+
+        let index = -1;
+        if (typeof target === "number") {
+            index = target;
+        } else if (target && typeof target === "object") {
+            index = this.images.indexOf(target);
+        }
+
+        if (index < 0 || index >= this.images.length) return;
+
+        this.currentModalIndex = index;
+        const img = this.images[index];
         const imageUrl = this.getImageUrl(img);
+
         const modalImg = this.modal.querySelector("#modal-img");
+        const modalCaption = this.modal.querySelector("#modal-caption");
+
         modalImg.src = imageUrl;
+        modalCaption.textContent = `${img.filename} (${index + 1} / ${this.images.length})`;
         this.modal.classList.add("show");
+    }
+
+    showPrevImage() {
+        if (!this.images || this.images.length === 0) return;
+        let prevIndex = this.currentModalIndex - 1;
+        if (prevIndex < 0) {
+            prevIndex = this.images.length - 1; // Wrap around to end
+        }
+        this.openModal(prevIndex);
+    }
+
+    showNextImage() {
+        if (!this.images || this.images.length === 0) return;
+        let nextIndex = this.currentModalIndex + 1;
+        if (nextIndex >= this.images.length) {
+            nextIndex = 0; // Wrap around to start
+        }
+        this.openModal(nextIndex);
+    }
+
+    closeModal() {
+        this.modal.classList.remove("show");
+        this.currentModalIndex = -1;
     }
 
     async deleteImage(img) {
@@ -847,6 +1006,14 @@ class CustomGalleryPanel {
             const data = await res.json();
             if (data.success) {
                 this.images = this.images.filter(i => i.filename !== img.filename);
+                if (this.currentModalIndex >= 0) {
+                    if (this.images.length === 0) {
+                        this.closeModal();
+                    } else {
+                        const nextIdx = Math.min(this.currentModalIndex, this.images.length - 1);
+                        this.openModal(nextIdx);
+                    }
+                }
                 this.renderGrid();
             } else {
                 alert(`Delete failed: ${data.error || "Unknown error"}`);
@@ -915,4 +1082,3 @@ app.registerExtension({
         }, 800);
     }
 });
-
