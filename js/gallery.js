@@ -307,7 +307,7 @@ const galleryStyles = `
     border-radius: 6px;
     box-shadow: 0 4px 16px rgba(0,0,0,0.5);
     padding: 4px;
-    min-width: 140px;
+    min-width: 170px;
     display: none;
 }
 
@@ -332,6 +332,15 @@ const galleryStyles = `
 
 .gallery-menu-item.danger:hover {
     background: #451a1a;
+}
+
+.gallery-menu-item.disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.gallery-menu-item.disabled:hover {
+    background: transparent;
 }
 
 /* Lightbox Modal */
@@ -436,9 +445,9 @@ const galleryStyles = `
 
 class CustomGalleryPanel {
     constructor() {
-        this.currentFolder = ""; // Empty string defaults to ComfyUI base output directory out of the box
+        this.currentFolder = ""; // Empty string defaults to ComfyUI base output directory
         this.viewMode = "thumbnail"; // "thumbnail" or "list"
-        this.images = [];
+        this.images = []; // Internal memory array (no physical file copying or renaming!)
         this.draggedIndex = null;
         this.currentModalIndex = -1;
 
@@ -472,7 +481,7 @@ class CustomGalleryPanel {
                         <select class="gallery-subfolder-select" id="gallery-subfolder-select" title="Quick subfolder picker"></select>
                     </div>
                     <div class="gallery-toolbar-row">
-                        <button class="gallery-import-btn" id="gallery-import-btn" title="Import/Upload Images to Folder">📥 Import</button>
+                        <button class="gallery-import-btn" id="gallery-import-btn" title="Import Images (No Copy)">📥 Import</button>
                         <input type="file" id="gallery-file-input" accept="image/*" multiple style="display: none;" />
                         <div class="gallery-btn-group">
                             <button class="gallery-mode-btn active" id="mode-btn-thumb" title="Thumbnail View (3 cols, max 100px)">▦</button>
@@ -488,13 +497,13 @@ class CustomGalleryPanel {
         `;
         document.body.appendChild(this.panel);
 
-        // Context Menu DOM
+        // Context Menu DOM with Physical Delete Guard Label
         this.contextMenu = document.createElement("div");
         this.contextMenu.id = "my-utils-gallery-contextmenu";
         this.contextMenu.innerHTML = `
             <div class="gallery-menu-item" id="ctx-view">🔍 View Fullsize</div>
             <div class="gallery-menu-item" id="ctx-copy">📋 Copy Filename</div>
-            <div class="gallery-menu-item danger" id="ctx-delete">🗑️ Delete Image</div>
+            <div class="gallery-menu-item danger" id="ctx-delete">🗑️ Physical Delete</div>
         `;
         document.body.appendChild(this.contextMenu);
 
@@ -602,20 +611,20 @@ class CustomGalleryPanel {
             this.fetchImages();
         });
 
-        // Import Button & File Input
+        // Import Button & File Input (No file copying)
         const importBtn = this.panel.querySelector("#gallery-import-btn");
         importBtn.addEventListener("click", () => {
             this.fileInput.click();
         });
 
-        this.fileInput.addEventListener("change", async (e) => {
+        this.fileInput.addEventListener("change", (e) => {
             const files = e.target.files;
             if (!files || files.length === 0) return;
-            await this.uploadFiles(files);
+            this.importLocalFiles(files);
             this.fileInput.value = "";
         });
 
-        // External File Drag and Drop onto Panel
+        // External File Drag and Drop onto Panel (No file copying)
         this.panel.addEventListener("dragover", (e) => {
             if (e.dataTransfer && e.dataTransfer.types.includes("Files")) {
                 e.preventDefault();
@@ -629,11 +638,11 @@ class CustomGalleryPanel {
             }
         });
 
-        this.panel.addEventListener("drop", async (e) => {
+        this.panel.addEventListener("drop", (e) => {
             if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
                 e.preventDefault();
                 this.panel.classList.remove("drag-file-over");
-                await this.uploadFiles(e.dataTransfer.files);
+                this.importLocalFiles(e.dataTransfer.files);
             }
         });
 
@@ -738,11 +747,12 @@ class CustomGalleryPanel {
                     if (img.type === "output") {
                         const imgSubfolder = img.subfolder || "";
                         if (!this.currentFolder || imgSubfolder === this.currentFolder) {
-                            // Insert newly generated image at top of list
+                            // Insert newly generated image at top of internal array
                             this.images.unshift({
                                 filename: img.filename,
                                 subfolder: imgSubfolder,
                                 full_path: "",
+                                is_in_output: true,
                                 mtime: Date.now() / 1000,
                                 size: 0
                             });
@@ -751,39 +761,32 @@ class CustomGalleryPanel {
                     }
                 }
                 if (addedAny) {
-                    this.images.sort((a, b) => b.filename.localeCompare(a.filename));
+                    this.saveStateToLocalStorage();
                     this.renderGrid();
                 }
             }
         });
     }
 
-    async uploadFiles(fileList) {
-        const formData = new FormData();
-        formData.append("folder", this.currentFolder);
+    importLocalFiles(fileList) {
         for (let i = 0; i < fileList.length; i++) {
-            formData.append("images", fileList[i]);
-        }
+            const file = fileList[i];
+            if (!file.type || !file.type.startsWith("image/")) continue;
 
-        try {
-            const res = await fetch("/my_utils/gallery/upload", {
-                method: "POST",
-                body: formData
+            const objectUrl = URL.createObjectURL(file);
+            // Add image directly to internal array without copying file on disk
+            this.images.unshift({
+                filename: file.name,
+                subfolder: "",
+                full_path: "",
+                objectUrl: objectUrl,
+                is_in_output: false, // External file, physical delete restricted
+                mtime: Date.now() / 1000,
+                size: file.size
             });
-            if (!res.ok) {
-                alert(`Upload failed: HTTP ${res.status}`);
-                return;
-            }
-            const data = await res.json();
-            if (data.success) {
-                this.fetchImages();
-            } else {
-                alert("Import failed: " + (data.error || "Unknown error"));
-            }
-        } catch (e) {
-            console.error("[Gallery] Upload error:", e);
-            alert("Error importing image files.");
         }
+        this.saveStateToLocalStorage();
+        this.renderGrid();
     }
 
     togglePanel() {
@@ -821,7 +824,10 @@ class CustomGalleryPanel {
                 console.error("[Gallery] Backend message:", data.error);
             }
 
-            this.images = data.images || [];
+            const fetchedImages = data.images || [];
+
+            // Restore custom reorder state from localStorage if available
+            this.images = this.applyLocalStorageOrder(fetchedImages);
 
             // Update subfolders dropdown
             this.select.innerHTML = "";
@@ -846,7 +852,46 @@ class CustomGalleryPanel {
         }
     }
 
+    saveStateToLocalStorage() {
+        try {
+            const key = `my_utils_gallery_order_${this.currentFolder || "root"}`;
+            const order = this.images.map(img => img.full_path || img.objectUrl || img.filename);
+            localStorage.setItem(key, JSON.stringify(order));
+        } catch (e) {
+            console.warn("[Gallery] Failed to save order to localStorage:", e);
+        }
+    }
+
+    applyLocalStorageOrder(images) {
+        try {
+            const key = `my_utils_gallery_order_${this.currentFolder || "root"}`;
+            const saved = localStorage.getItem(key);
+            if (!saved) return images;
+
+            const order = JSON.parse(saved);
+            if (!Array.isArray(order) || order.length === 0) return images;
+
+            const orderMap = new Map();
+            order.forEach((id, idx) => orderMap.set(id, idx));
+
+            images.sort((a, b) => {
+                const idA = a.full_path || a.filename;
+                const idB = b.full_path || b.filename;
+                const posA = orderMap.has(idA) ? orderMap.get(idA) : 999999;
+                const posB = orderMap.has(idB) ? orderMap.get(idB) : 999999;
+                if (posA !== posB) return posA - posB;
+                return b.filename.localeCompare(a.filename);
+            });
+        } catch (e) {
+            console.warn("[Gallery] Failed to load order from localStorage:", e);
+        }
+        return images;
+    }
+
     getImageUrl(img) {
+        if (img.objectUrl) {
+            return img.objectUrl;
+        }
         if (img.full_path) {
             return `/my_utils/gallery/view_file?path=${encodeURIComponent(img.full_path)}`;
         }
@@ -892,7 +937,7 @@ class CustomGalleryPanel {
                 this.showContextMenu(e.clientX, e.clientY);
             });
 
-            // Drag and drop events for reordering
+            // Drag and drop events for in-memory reordering (no file renaming!)
             card.addEventListener("dragstart", (e) => {
                 this.draggedIndex = idx;
                 card.classList.add("dragging");
@@ -930,6 +975,16 @@ class CustomGalleryPanel {
     }
 
     showContextMenu(x, y) {
+        const deleteItem = this.contextMenu.querySelector("#ctx-delete");
+
+        if (this.activeContextItem && !this.activeContextItem.is_in_output) {
+            deleteItem.classList.add("disabled");
+            deleteItem.title = "Security Guard: Physical delete is restricted to files inside ComfyUI output folder.";
+        } else {
+            deleteItem.classList.remove("disabled");
+            deleteItem.title = "Physically delete file from disk";
+        }
+
         this.contextMenu.style.left = `${x}px`;
         this.contextMenu.style.top = `${y}px`;
         this.contextMenu.style.display = "block";
@@ -963,7 +1018,7 @@ class CustomGalleryPanel {
         if (!this.images || this.images.length === 0) return;
         let prevIndex = this.currentModalIndex - 1;
         if (prevIndex < 0) {
-            prevIndex = this.images.length - 1; // Wrap around to end
+            prevIndex = this.images.length - 1;
         }
         this.openModal(prevIndex);
     }
@@ -972,7 +1027,7 @@ class CustomGalleryPanel {
         if (!this.images || this.images.length === 0) return;
         let nextIndex = this.currentModalIndex + 1;
         if (nextIndex >= this.images.length) {
-            nextIndex = 0; // Wrap around to start
+            nextIndex = 0;
         }
         this.openModal(nextIndex);
     }
@@ -983,7 +1038,13 @@ class CustomGalleryPanel {
     }
 
     async deleteImage(img) {
-        if (!confirm(`Are you sure you want to physically delete "${img.filename}"?`)) {
+        // STRICT SAFETY GUARD: Verify file is in output folder
+        if (!img.is_in_output) {
+            alert("Security Guard: Physical deletion is strictly restricted to files inside the ComfyUI output folder.");
+            return;
+        }
+
+        if (!confirm(`Are you sure you want to physically delete "${img.filename}" from disk?`)) {
             return;
         }
 
@@ -999,13 +1060,14 @@ class CustomGalleryPanel {
             });
 
             if (!res.ok) {
-                alert(`Delete failed: HTTP ${res.status}`);
+                const errData = await res.json().catch(() => ({}));
+                alert(`Delete failed: ${errData.error || res.statusText}`);
                 return;
             }
 
             const data = await res.json();
             if (data.success) {
-                this.images = this.images.filter(i => i.filename !== img.filename);
+                this.images = this.images.filter(i => i.filename !== img.filename && i.full_path !== img.full_path);
                 if (this.currentModalIndex >= 0) {
                     if (this.images.length === 0) {
                         this.closeModal();
@@ -1014,6 +1076,7 @@ class CustomGalleryPanel {
                         this.openModal(nextIdx);
                     }
                 }
+                this.saveStateToLocalStorage();
                 this.renderGrid();
             } else {
                 alert(`Delete failed: ${data.error || "Unknown error"}`);
@@ -1024,33 +1087,12 @@ class CustomGalleryPanel {
         }
     }
 
-    async reorderImages(fromIdx, toIdx) {
-        // Reorder locally first for instant feedback
+    reorderImages(fromIdx, toIdx) {
+        // Reorder strictly in memory (no file renaming on disk!)
         const movedItem = this.images.splice(fromIdx, 1)[0];
         this.images.splice(toIdx, 0, movedItem);
+        this.saveStateToLocalStorage();
         this.renderGrid();
-
-        // Send new order to backend to physically rename files
-        try {
-            const filenames = this.images.map(img => img.filename);
-            const res = await fetch("/my_utils/gallery/reorder", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    folder: this.currentFolder,
-                    filenames: filenames
-                })
-            });
-
-            if (!res.ok) return;
-
-            const data = await res.json();
-            if (data.success) {
-                this.fetchImages();
-            }
-        } catch (e) {
-            console.error("[Gallery] Reorder error:", e);
-        }
     }
 }
 
