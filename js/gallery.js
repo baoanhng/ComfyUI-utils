@@ -30,35 +30,17 @@ const galleryStyles = `
     background: #1e1e24;
 }
 
-#my-utils-gallery-toggle-btn {
-    position: fixed;
-    top: 60px;
-    left: 0;
-    z-index: 9998;
-    background: #27272a;
-    color: #f4f4f5;
-    border: 1px solid #3f3f46;
-    border-left: none;
-    border-radius: 0 8px 8px 0;
-    padding: 8px 12px;
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: 500;
-    box-shadow: 2px 2px 10px rgba(0,0,0,0.3);
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    transition: all 0.2s ease;
+.gallery-dock-btn {
+    cursor: pointer !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    font-weight: 500 !important;
+    transition: all 0.15s ease !important;
 }
 
-#my-utils-gallery-toggle-btn:hover {
-    background: #3f3f46;
-    color: #ffffff;
-    padding-left: 10px;
-}
-
-#my-utils-gallery-panel.open ~ #my-utils-gallery-toggle-btn {
-    left: 350px;
+.gallery-dock-btn:hover {
+    filter: brightness(1.2);
 }
 
 .gallery-header {
@@ -390,6 +372,9 @@ class CustomGalleryPanel {
         this.initCSS();
         this.initDOM();
         this.initEvents();
+
+        // Inject dock button near Manager button
+        this.tryInjectDockButton();
     }
 
     initCSS() {
@@ -430,12 +415,6 @@ class CustomGalleryPanel {
         `;
         document.body.appendChild(this.panel);
 
-        // Toggle Button on left window edge
-        this.toggleBtn = document.createElement("button");
-        this.toggleBtn.id = "my-utils-gallery-toggle-btn";
-        this.toggleBtn.innerHTML = `<span>🖼️</span> <span>Gallery</span>`;
-        document.body.appendChild(this.toggleBtn);
-
         // Context Menu DOM
         this.contextMenu = document.createElement("div");
         this.contextMenu.id = "my-utils-gallery-contextmenu";
@@ -459,9 +438,64 @@ class CustomGalleryPanel {
         this.activeContextItem = null;
     }
 
+    tryInjectDockButton(retries = 0) {
+        if (document.getElementById("my-utils-gallery-dock-btn")) return;
+
+        // 1. Locate Manager button specifically
+        const buttons = Array.from(document.querySelectorAll("button"));
+        const managerBtn = buttons.find(b => {
+            const title = (b.getAttribute("title") || b.getAttribute("aria-label") || b.textContent || "").trim();
+            return title.includes("Manager");
+        });
+
+        const dockBtn = document.createElement("button");
+        dockBtn.id = "my-utils-gallery-dock-btn";
+        dockBtn.title = "Output Gallery";
+        dockBtn.setAttribute("aria-label", "Output Gallery");
+        dockBtn.className = "comfyui-button gallery-dock-btn";
+        dockBtn.innerHTML = `<i class="mdi mdi-image-multiple" style="font-size: 16px;"></i><span>Gallery</span>`;
+        dockBtn.addEventListener("click", () => this.togglePanel());
+
+        if (managerBtn) {
+            const btnGroup = document.createElement("div");
+            btnGroup.className = "comfyui-button-group";
+            btnGroup.appendChild(dockBtn);
+
+            const parentGroup = managerBtn.closest(".comfyui-button-group");
+            if (parentGroup && parentGroup.parentNode) {
+                parentGroup.parentNode.insertBefore(btnGroup, parentGroup.nextSibling);
+            } else if (managerBtn.parentNode) {
+                managerBtn.parentNode.insertBefore(dockBtn, managerBtn.nextSibling);
+            }
+            return;
+        }
+
+        // 2. Fallback: Search for actionbar containers or action-bar-buttons
+        const actionBarButtons = document.querySelector('[data-testid="action-bar-buttons"], .actionbar-container, .legacy-topbar-container');
+        if (actionBarButtons) {
+            const btnGroup = document.createElement("div");
+            btnGroup.className = "comfyui-button-group";
+            btnGroup.appendChild(dockBtn);
+            actionBarButtons.appendChild(btnGroup);
+            return;
+        }
+
+        // 3. Fallback: Check standard ComfyUI menu dock containers
+        const topDock = document.querySelector(".comfyui-menu-dock, .comfyui-menu, .comfy-menu, .side-tool-bar, .top-bar-right");
+        if (topDock) {
+            dockBtn.className = "comfy-btn gallery-dock-btn";
+            topDock.appendChild(dockBtn);
+            return;
+        }
+
+        // Retry if DOM elements are still rendering
+        if (retries < 25) {
+            setTimeout(() => this.tryInjectDockButton(retries + 1), 400);
+        }
+    }
+
     initEvents() {
-        // Toggle Panel open/close
-        this.toggleBtn.addEventListener("click", () => this.togglePanel());
+        // Close Button
         this.panel.querySelector("#gallery-close-btn").addEventListener("click", () => this.closePanel());
 
         // Folder Input Text Change
@@ -598,7 +632,6 @@ class CustomGalleryPanel {
                     }
                 }
                 if (addedAny) {
-                    // Maintain sorting by name desc if required or render grid
                     this.images.sort((a, b) => b.filename.localeCompare(a.filename));
                     this.renderGrid();
                 }
@@ -660,9 +693,6 @@ class CustomGalleryPanel {
 
             if (!res.ok) {
                 console.error(`[Gallery] HTTP Error ${res.status}: ${res.statusText}`);
-                if (res.status === 404) {
-                    console.warn("[Gallery] API route not found. Ensure ComfyUI backend server is running with latest custom nodes loaded.");
-                }
                 return;
             }
 
@@ -857,9 +887,32 @@ class CustomGalleryPanel {
     }
 }
 
+let galleryPanelInstance = null;
+
 app.registerExtension({
     name: "my_utils.Gallery",
+    actionBarButtons: [
+        {
+            icon: "icon-[lucide--images] size-4",
+            tooltip: "Output Gallery",
+            onClick: () => {
+                if (galleryPanelInstance) {
+                    galleryPanelInstance.togglePanel();
+                }
+            }
+        }
+    ],
     async setup() {
-        new CustomGalleryPanel();
+        galleryPanelInstance = new CustomGalleryPanel();
+        window.__myUtilsGalleryPanel = galleryPanelInstance;
+
+        // Fallback for older frontend versions that do not render actionBarButtons automatically
+        setTimeout(() => {
+            const hasActionBarBtn = document.querySelector('button[aria-label="Output Gallery"], button[title="Output Gallery"]');
+            if (!hasActionBarBtn) {
+                galleryPanelInstance.tryInjectDockButton();
+            }
+        }, 800);
     }
 });
+
