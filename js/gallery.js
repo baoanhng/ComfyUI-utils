@@ -555,6 +555,7 @@ class CustomGalleryPanel {
         this.contextMenu.id = "my-utils-gallery-contextmenu";
         this.contextMenu.innerHTML = `
             <div class="gallery-menu-item" id="ctx-view">🔍 View Fullsize</div>
+            <div class="gallery-menu-item" id="ctx-open-workflow">📂 Open as Workflow</div>
             <div class="gallery-menu-item" id="ctx-copy">📋 Copy Filename</div>
             <div class="gallery-menu-item danger" id="ctx-delete">🗑️ Physical Delete</div>
         `;
@@ -800,6 +801,12 @@ class CustomGalleryPanel {
         this.contextMenu.querySelector("#ctx-copy").addEventListener("click", () => {
             if (this.activeContextItem) {
                 navigator.clipboard.writeText(this.activeContextItem.filename);
+            }
+        });
+
+        this.contextMenu.querySelector("#ctx-open-workflow").addEventListener("click", async () => {
+            if (this.activeContextItem) {
+                await this.openAsWorkflow(this.activeContextItem);
             }
         });
 
@@ -1236,6 +1243,27 @@ class CustomGalleryPanel {
         } catch (e) {
             console.error("[Gallery] Delete error:", e);
             alert("Error deleting image file.");
+        }
+    }
+
+    async openAsWorkflow(img) {
+        try {
+            const imageUrl = this.getImageUrl(img);
+            const res = await fetch(imageUrl);
+            if (!res.ok) {
+                alert(`Failed to fetch image: HTTP ${res.status}`);
+                return;
+            }
+            const blob = await res.blob();
+            const file = new File([blob], img.filename, { type: blob.type || "image/png" });
+            if (app.handleFile) {
+                app.handleFile(file);
+            } else {
+                alert("app.handleFile is not available in this version of ComfyUI.");
+            }
+        } catch (e) {
+            console.error("[Gallery] Open as workflow error:", e);
+            alert("Error loading workflow from image.");
         }
     }
 
