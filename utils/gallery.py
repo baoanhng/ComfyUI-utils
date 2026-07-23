@@ -181,10 +181,21 @@ def setup_gallery_api():
                 if os.path.isabs(item_str):
                     file_path = os.path.normpath(item_str)
                 else:
+                    # 1. Try current folder first
                     target_dir = os.path.join(output_dir, folder_input) if folder_input else output_dir
                     file_path = os.path.normpath(os.path.join(target_dir, item_str))
+
+                    # 2. Fallback: try output root
                     if not os.path.exists(file_path):
                         file_path = os.path.normpath(os.path.join(output_dir, item_str))
+
+                    # 3. Fallback: search all subfolders inside output/ for the bare filename
+                    if not os.path.exists(file_path):
+                        found = glob.glob(os.path.join(output_dir, "**", item_str), recursive=True)
+                        # Filter to only files inside output_dir
+                        found = [f for f in found if os.path.isfile(f) and is_safe_subpath(f, output_dir)]
+                        if found:
+                            file_path = os.path.normpath(found[0])
 
                 if os.path.exists(file_path) and os.path.isfile(file_path) and is_safe_subpath(file_path, output_dir):
                     ext = os.path.splitext(file_path)[1].lower()
