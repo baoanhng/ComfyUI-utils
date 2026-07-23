@@ -458,9 +458,24 @@ const galleryStyles = `
 }
 `;
 
+function isFolderMatch(imgSubfolder, activeFolder) {
+    if (!activeFolder) return true;
+    
+    const normalize = (path) => {
+        if (!path) return "";
+        let s = path.trim().replace(/\\/g, "/").replace(/\/+$/, "");
+        if (s.toLowerCase() === "output" || s.toLowerCase().endsWith("/output")) return "";
+        return s.toLowerCase();
+    };
+
+    const s1 = normalize(imgSubfolder);
+    const s2 = normalize(activeFolder);
+    return s1 === s2;
+}
+
 class CustomGalleryPanel {
     constructor() {
-        this.currentFolder = ""; // Default folder path
+        this.currentFolder = ""; // Default folder path relative to ComfyUI output
         this.viewMode = "thumbnail"; // "thumbnail" or "list"
         this.images = []; // Pure in-memory display array (retains all imported & generated images)
         this.draggedIndex = null;
@@ -468,6 +483,28 @@ class CustomGalleryPanel {
 
         this.initCSS();
         this.initDOM();
+
+        // Restore lightweight path metadata state from localStorage across page reloads (F5)
+        this.loadStateFromLocalStorage();
+
+        // Sync restored settings to UI elements
+        if (this.folderInput) this.folderInput.value = this.currentFolder;
+        const thumbBtn = this.panel.querySelector("#mode-btn-thumb");
+        const listBtn = this.panel.querySelector("#mode-btn-list");
+        if (this.viewMode === "list") {
+            if (listBtn) listBtn.classList.add("active");
+            if (thumbBtn) thumbBtn.classList.remove("active");
+            if (this.grid) this.grid.className = "gallery-grid mode-list";
+        } else {
+            if (thumbBtn) thumbBtn.classList.add("active");
+            if (listBtn) listBtn.classList.remove("active");
+            if (this.grid) this.grid.className = "gallery-grid mode-thumbnail";
+        }
+
+        if (this.images.length > 0) {
+            this.renderGrid();
+        }
+
         this.initEvents();
 
         // Inject dock button near Manager button
@@ -492,11 +529,11 @@ class CustomGalleryPanel {
                 </div>
                 <div class="gallery-controls">
                     <div class="gallery-input-group">
-                        <input type="text" class="gallery-folder-input" id="gallery-folder-input" placeholder="Folder path (default: ComfyUI output)" title="Folder path to scan (relative to output or absolute)" />
+                        <input type="text" class="gallery-folder-input" id="gallery-folder-input" placeholder="Folder path (default: ComfyUI output)" title="Folder path inside output directory" />
                         <select class="gallery-subfolder-select" id="gallery-subfolder-select" title="Quick subfolder picker"></select>
                     </div>
                     <div class="gallery-toolbar-row">
-                        <button class="gallery-import-btn" id="gallery-import-btn" title="Import Images (No Copy)">📥 Import</button>
+                        <button class="gallery-import-btn" id="gallery-import-btn" title="Import subset image files from ComfyUI output/">📥 Import</button>
                         <input type="file" id="gallery-file-input" accept="image/*" multiple style="display: none;" />
                         <div class="gallery-btn-group">
                             <button class="gallery-mode-btn active" id="mode-btn-thumb" title="Thumbnail View (3 cols, max 100px)">▦</button>
@@ -608,6 +645,7 @@ class CustomGalleryPanel {
         this.folderInput.addEventListener("keydown", (e) => {
             if (e.key === "Enter") {
                 this.currentFolder = this.folderInput.value.trim();
+                this.saveStateToLocalStorage();
                 this.fetchImages();
             }
         });
@@ -616,6 +654,7 @@ class CustomGalleryPanel {
             const val = this.folderInput.value.trim();
             if (val !== this.currentFolder) {
                 this.currentFolder = val;
+                this.saveStateToLocalStorage();
                 this.fetchImages();
             }
         });
@@ -624,23 +663,25 @@ class CustomGalleryPanel {
         this.select.addEventListener("change", (e) => {
             this.currentFolder = e.target.value;
             this.folderInput.value = e.target.value;
+            this.saveStateToLocalStorage();
             this.fetchImages();
         });
 
-        // Import Button & File Input (No file copying)
+        // Import Button & File Input for subset file selection
         const importBtn = this.panel.querySelector("#gallery-import-btn");
         importBtn.addEventListener("click", () => {
             this.fileInput.click();
         });
 
-        this.fileInput.addEventListener("change", (e) => {
+        this.fileInput.addEventListener("change", async (e) => {
             const files = e.target.files;
             if (!files || files.length === 0) return;
-            this.importLocalFiles(files);
+            const items = Array.from(files).map(f => f.name);
+            await this.importSubsetFiles(items);
             this.fileInput.value = "";
         });
 
-        // External File Drag and Drop onto Panel (No file copying)
+        // External File Drag and Drop onto Panel
         this.panel.addEventListener("dragover", (e) => {
             if (e.dataTransfer && e.dataTransfer.types.includes("Files")) {
                 e.preventDefault();
@@ -654,11 +695,12 @@ class CustomGalleryPanel {
             }
         });
 
-        this.panel.addEventListener("drop", (e) => {
+        this.panel.addEventListener("drop", async (e) => {
             if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
                 e.preventDefault();
                 this.panel.classList.remove("drag-file-over");
-                this.importLocalFiles(e.dataTransfer.files);
+                const items = Array.from(e.dataTransfer.files).map(f => f.name);
+                await this.importSubsetFiles(items);
             }
         });
 
@@ -671,7 +713,9 @@ class CustomGalleryPanel {
         this.panel.querySelector("#gallery-clear-btn").addEventListener("click", () => {
             if (confirm("Reset in-memory gallery view?")) {
                 this.images = [];
-                this.saveStateToLocalStorage();
+                try {
+                    localStorage.removeItem("my_utils_gallery_paths_state");
+                } catch (err) {}
                 this.fetchImages();
             }
         });
@@ -685,6 +729,7 @@ class CustomGalleryPanel {
             thumbBtn.classList.add("active");
             listBtn.classList.remove("active");
             this.grid.className = "gallery-grid mode-thumbnail";
+            this.saveStateToLocalStorage();
             this.renderGrid();
         });
 
@@ -693,6 +738,7 @@ class CustomGalleryPanel {
             listBtn.classList.add("active");
             thumbBtn.classList.remove("active");
             this.grid.className = "gallery-grid mode-list";
+            this.saveStateToLocalStorage();
             this.renderGrid();
         });
 
@@ -777,7 +823,7 @@ class CustomGalleryPanel {
                         const exists = this.images.some(i => (i.full_path || (i.subfolder ? i.subfolder + "/" + i.filename : i.filename)) === key);
 
                         if (!exists) {
-                            // Prepend newly generated image to top of in-memory array
+                            // Prepend newly generated image path metadata to top of array
                             this.images.unshift({
                                 filename: img.filename,
                                 subfolder: imgSubfolder,
@@ -810,25 +856,61 @@ class CustomGalleryPanel {
         });
     }
 
-    importLocalFiles(fileList) {
-        for (let i = 0; i < fileList.length; i++) {
-            const file = fileList[i];
-            if (!file.type || !file.type.startsWith("image/")) continue;
-
-            const objectUrl = URL.createObjectURL(file);
-            // Add image directly to in-memory array without file copying or disk mutation
-            this.images.unshift({
-                filename: file.name,
-                subfolder: "",
-                full_path: "",
-                objectUrl: objectUrl,
-                is_in_output: false, // External file, physical delete restricted
-                mtime: Date.now() / 1000,
-                size: file.size
+    async importSubsetFiles(items) {
+        try {
+            const res = await fetch("/my_utils/gallery/verify_import", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    folder: this.currentFolder,
+                    items: items
+                })
             });
+
+            if (!res.ok) {
+                alert(`Import verification failed: HTTP ${res.status}`);
+                return;
+            }
+
+            const data = await res.json();
+            if (data.error) {
+                alert(`Import error: ${data.error}`);
+                return;
+            }
+
+            const validImages = data.images || [];
+
+            if (validImages.length === 0) {
+                alert("Import Guard: Selected files are outside the ComfyUI output directory or do not exist on disk.");
+                return;
+            }
+
+            const existingMap = new Map();
+            this.images.forEach(img => {
+                const key = img.full_path || (img.subfolder ? img.subfolder + "/" + img.filename : img.filename);
+                existingMap.set(key, img);
+            });
+
+            let addedCount = 0;
+            validImages.forEach(img => {
+                const key = img.full_path || (img.subfolder ? img.subfolder + "/" + img.filename : img.filename);
+                if (!existingMap.has(key)) {
+                    this.images.unshift(img);
+                    existingMap.set(key, img);
+                    addedCount++;
+                }
+            });
+
+            if (data.invalid_count > 0) {
+                alert(`Import Warning: ${addedCount} file(s) imported from output/. ${data.invalid_count} file(s) were rejected because their path is outside ComfyUI output/ directory.`);
+            }
+
+            this.saveStateToLocalStorage();
+            this.renderGrid();
+        } catch (e) {
+            console.error("[Gallery] Import subset files error:", e);
+            alert("Error verifying subset file imports.");
         }
-        this.saveStateToLocalStorage();
-        this.renderGrid();
     }
 
     togglePanel() {
@@ -868,10 +950,10 @@ class CustomGalleryPanel {
 
             const serverImages = data.images || [];
 
-            // MERGE: Keep existing manually imported/custom items in memory!
+            // MERGE: Keep existing image path entries in memory!
             const existingMap = new Map();
             this.images.forEach(img => {
-                const key = img.full_path || img.objectUrl || (img.subfolder ? img.subfolder + "/" + img.filename : img.filename);
+                const key = img.full_path || (img.subfolder ? img.subfolder + "/" + img.filename : img.filename);
                 existingMap.set(key, img);
             });
 
@@ -883,9 +965,8 @@ class CustomGalleryPanel {
                 }
             });
 
-            // Convert back to array and apply custom ordering
-            const mergedList = Array.from(existingMap.values());
-            this.images = this.applyLocalStorageOrder(mergedList);
+            // Convert back to array
+            this.images = Array.from(existingMap.values());
 
             // Update subfolders dropdown
             this.select.innerHTML = "";
@@ -913,55 +994,56 @@ class CustomGalleryPanel {
 
     saveStateToLocalStorage() {
         try {
-            const key = `my_utils_gallery_order_main`;
-            const order = this.images.map(img => img.full_path || img.objectUrl || (img.subfolder ? img.subfolder + "/" + img.filename : img.filename));
-            localStorage.setItem(key, JSON.stringify(order));
+            const state = {
+                currentFolder: this.currentFolder || "",
+                viewMode: this.viewMode || "thumbnail",
+                images: this.images.map(img => ({
+                    filename: img.filename,
+                    subfolder: img.subfolder || "",
+                    full_path: img.full_path || "",
+                    is_in_output: true,
+                    mtime: img.mtime || 0,
+                    size: img.size || 0
+                }))
+            };
+            localStorage.setItem("my_utils_gallery_paths_state", JSON.stringify(state));
         } catch (e) {
-            console.warn("[Gallery] Failed to save order to localStorage:", e);
+            console.warn("[Gallery] Failed to save path state to localStorage:", e);
         }
     }
 
-    applyLocalStorageOrder(images) {
+    loadStateFromLocalStorage() {
         try {
-            const key = `my_utils_gallery_order_main`;
-            const saved = localStorage.getItem(key);
-            if (!saved) return images;
-
-            const order = JSON.parse(saved);
-            if (!Array.isArray(order) || order.length === 0) return images;
-
-            const orderMap = new Map();
-            order.forEach((id, idx) => orderMap.set(id, idx));
-
-            images.sort((a, b) => {
-                const idA = a.full_path || a.objectUrl || (a.subfolder ? a.subfolder + "/" + a.filename : a.filename);
-                const idB = b.full_path || b.objectUrl || (b.subfolder ? b.subfolder + "/" + b.filename : b.filename);
-
-                const hasA = orderMap.has(idA);
-                const hasB = orderMap.has(idB);
-
-                if (hasA && hasB) {
-                    return orderMap.get(idA) - orderMap.get(idB);
+            const saved = localStorage.getItem("my_utils_gallery_paths_state");
+            if (!saved) return false;
+            const state = JSON.parse(saved);
+            if (state) {
+                if (typeof state.currentFolder === "string") {
+                    this.currentFolder = state.currentFolder;
                 }
-                if (!hasA && hasB) {
-                    return -1; // Unordered / newly generated image goes to the top!
+                if (state.viewMode === "thumbnail" || state.viewMode === "list") {
+                    this.viewMode = state.viewMode;
                 }
-                if (hasA && !hasB) {
-                    return 1;
+                if (Array.isArray(state.images) && state.images.length > 0) {
+                    // Ensure only path metadata objects exist
+                    this.images = state.images.map(img => ({
+                        filename: img.filename,
+                        subfolder: img.subfolder || "",
+                        full_path: img.full_path || "",
+                        is_in_output: true,
+                        mtime: img.mtime || 0,
+                        size: img.size || 0
+                    }));
                 }
-                // Both are new: sort by filename descending
-                return b.filename.localeCompare(a.filename);
-            });
+                return true;
+            }
         } catch (e) {
-            console.warn("[Gallery] Failed to load order from localStorage:", e);
+            console.warn("[Gallery] Failed to load path state from localStorage:", e);
         }
-        return images;
+        return false;
     }
 
     getImageUrl(img) {
-        if (img.objectUrl) {
-            return img.objectUrl;
-        }
         if (img.full_path) {
             return `/my_utils/gallery/view_file?path=${encodeURIComponent(img.full_path)}`;
         }
@@ -1007,7 +1089,7 @@ class CustomGalleryPanel {
                 this.showContextMenu(e.clientX, e.clientY);
             });
 
-            // Drag and drop events for pure in-memory reordering (no file renaming!)
+            // Drag and drop events for pure in-memory reordering (no file renaming on disk!)
             card.addEventListener("dragstart", (e) => {
                 this.draggedIndex = idx;
                 card.classList.add("dragging");

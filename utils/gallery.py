@@ -157,3 +157,59 @@ def setup_gallery_api():
 
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
+
+    # Endpoint 4: Verify and import subset of file paths inside ComfyUI output directory
+    @PromptServer.instance.routes.post("/my_utils/gallery/verify_import")
+    async def verify_import_gallery_images(request):
+        try:
+            body = await request.json()
+            folder_input = body.get("folder", "")
+            items = body.get("items", [])
+
+            output_dir = folder_paths.get_output_directory()
+            valid_images = []
+            invalid_count = 0
+
+            if not isinstance(items, list):
+                return web.json_response({"error": "Invalid items list"}, status=400)
+
+            for item in items:
+                item_str = str(item).strip()
+                if not item_str:
+                    continue
+
+                if os.path.isabs(item_str):
+                    file_path = os.path.normpath(item_str)
+                else:
+                    target_dir = os.path.join(output_dir, folder_input) if folder_input else output_dir
+                    file_path = os.path.normpath(os.path.join(target_dir, item_str))
+                    if not os.path.exists(file_path):
+                        file_path = os.path.normpath(os.path.join(output_dir, item_str))
+
+                if os.path.exists(file_path) and os.path.isfile(file_path) and is_safe_subpath(file_path, output_dir):
+                    ext = os.path.splitext(file_path)[1].lower()
+                    if ext in IMAGE_EXTENSIONS:
+                        stat = os.stat(file_path)
+                        rel = os.path.relpath(os.path.dirname(file_path), output_dir)
+                        subfolder = "" if rel == "." else rel.replace("\\", "/")
+                        valid_images.append({
+                            "filename": os.path.basename(file_path),
+                            "subfolder": subfolder,
+                            "full_path": file_path.replace("\\", "/"),
+                            "is_in_output": True,
+                            "mtime": stat.st_mtime,
+                            "size": stat.st_size
+                        })
+                    else:
+                        invalid_count += 1
+                else:
+                    invalid_count += 1
+
+            return web.json_response({
+                "success": True,
+                "images": valid_images,
+                "invalid_count": invalid_count
+            })
+
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
