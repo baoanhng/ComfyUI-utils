@@ -557,6 +557,7 @@ class CustomGalleryPanel {
             <div class="gallery-menu-item" id="ctx-view">🔍 View Fullsize</div>
             <div class="gallery-menu-item" id="ctx-open-workflow">📂 Open as Workflow</div>
             <div class="gallery-menu-item" id="ctx-copy">📋 Copy Filename</div>
+            <div class="gallery-menu-item" id="ctx-remove">❌ Remove from Gallery</div>
             <div class="gallery-menu-item danger" id="ctx-delete">🗑️ Physical Delete</div>
         `;
         document.body.appendChild(this.contextMenu);
@@ -807,6 +808,12 @@ class CustomGalleryPanel {
         this.contextMenu.querySelector("#ctx-open-workflow").addEventListener("click", async () => {
             if (this.activeContextItem) {
                 await this.openAsWorkflow(this.activeContextItem);
+            }
+        });
+
+        this.contextMenu.querySelector("#ctx-remove").addEventListener("click", () => {
+            if (this.activeContextItem) {
+                this.removeFromGallery(this.activeContextItem);
             }
         });
 
@@ -1265,6 +1272,16 @@ class CustomGalleryPanel {
             console.error("[Gallery] Open as workflow error:", e);
             alert("Error loading workflow from image.");
         }
+    }
+
+    removeFromGallery(img) {
+        const key = img.full_path || (img.subfolder ? img.subfolder + "/" + img.filename : img.filename);
+        this.images = this.images.filter(i => {
+            const k = i.full_path || (i.subfolder ? i.subfolder + "/" + i.filename : i.filename);
+            return k !== key;
+        });
+        this.saveStateToLocalStorage();
+        this.renderGrid();
     }
 
     reorderImages(fromIdx, toIdx) {
