@@ -192,19 +192,6 @@ def setup_gallery_api():
 
             file_path = os.path.normpath(file_path)
 
-            # Fallback: if file not found at the constructed path, search subfolders
-            if not os.path.exists(file_path) and filename:
-                # Try output root
-                alt = os.path.normpath(os.path.join(output_dir, filename))
-                if os.path.exists(alt):
-                    file_path = alt
-                else:
-                    # Recursive search inside output/
-                    found = glob.glob(os.path.join(output_dir, "**", filename), recursive=True)
-                    found = [f for f in found if os.path.isfile(f) and is_safe_subpath(f, output_dir)]
-                    if found:
-                        file_path = os.path.normpath(found[0])
-
             if not file_path or not os.path.exists(file_path):
                 return web.json_response({"error": "File does not exist"}, status=404)
 
