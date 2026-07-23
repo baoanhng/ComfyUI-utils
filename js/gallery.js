@@ -718,7 +718,7 @@ class CustomGalleryPanel {
                 try {
                     localStorage.removeItem("my_utils_gallery_paths_state");
                 } catch (err) {}
-                this.fetchImages();
+                this.renderGrid();
             }
         });
 
@@ -856,18 +856,6 @@ class CustomGalleryPanel {
                 }
             }
         });
-
-        // 2. Listen for "executing" event (fires when prompt execution finishes, detail === null)
-        api.addEventListener("executing", (event) => {
-            if (event.detail === null) {
-                setTimeout(() => this.fetchImages(), 400);
-            }
-        });
-
-        // 3. Listen for "execution_success" event
-        api.addEventListener("execution_success", () => {
-            setTimeout(() => this.fetchImages(), 400);
-        });
     }
 
     async importSubsetFiles(items) {
@@ -908,6 +896,7 @@ class CustomGalleryPanel {
             let addedCount = 0;
             validImages.forEach(img => {
                 const key = img.full_path || (img.subfolder ? img.subfolder + "/" + img.filename : img.filename);
+                this.removedKeys.delete(key); // User explicitly re-importing overrides prior removal
                 if (!existingMap.has(key)) {
                     this.images.unshift(img);
                     existingMap.set(key, img);
@@ -962,25 +951,8 @@ class CustomGalleryPanel {
                 console.error("[Gallery] Backend message:", data.error);
             }
 
-            const serverImages = data.images || [];
-
-            // MERGE: Keep existing image path entries in memory!
-            const existingMap = new Map();
-            this.images.forEach(img => {
-                const key = img.full_path || (img.subfolder ? img.subfolder + "/" + img.filename : img.filename);
-                existingMap.set(key, img);
-            });
-
-            // Add newly scanned server images that aren't in memory yet
-            serverImages.forEach(sImg => {
-                const key = sImg.full_path || (sImg.subfolder ? sImg.subfolder + "/" + sImg.filename : sImg.filename);
-                if (!existingMap.has(key)) {
-                    existingMap.set(key, sImg);
-                }
-            });
-
-            // Convert back to array
-            this.images = Array.from(existingMap.values());
+            // Replace gallery state with server-scanned images
+            this.images = data.images || [];
 
             // Update subfolders dropdown
             this.select.innerHTML = "";
