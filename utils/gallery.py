@@ -1,10 +1,57 @@
 import os
+import sys
 import glob
 import folder_paths
 from server import PromptServer
 from aiohttp import web
 
 IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.avif'}
+
+def send_to_recycle_bin(path):
+    """Send a file to the OS recycle bin instead of permanently deleting it.
+    Uses Windows SHFileOperationW on Windows, falls back to os.remove otherwise."""
+    path = os.path.abspath(path)
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class SHFILEOPSTRUCTW(ctypes.Structure):
+                _fields_ = [
+                    ("hwnd", wintypes.HWND),
+                    ("wFunc", ctypes.c_uint),
+                    ("pFrom", wintypes.LPCWSTR),
+                    ("pTo", wintypes.LPCWSTR),
+                    ("fFlags", ctypes.c_ushort),
+                    ("fAnyOperationsAborted", wintypes.BOOL),
+                    ("hNameMappings", ctypes.c_void_p),
+                    ("lpszProgressTitle", wintypes.LPCWSTR),
+                ]
+
+            FO_DELETE = 0x0003
+            FOF_ALLOWUNDO = 0x0040
+            FOF_NOCONFIRMATION = 0x0010
+            FOF_SILENT = 0x0004
+
+            # pFrom must be double-null terminated
+            fileop = SHFILEOPSTRUCTW()
+            fileop.hwnd = None
+            fileop.wFunc = FO_DELETE
+            fileop.pFrom = path + "\0"
+            fileop.pTo = None
+            fileop.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT
+            fileop.fAnyOperationsAborted = False
+            fileop.hNameMappings = None
+            fileop.lpszProgressTitle = None
+
+            result = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(fileop))
+            if result != 0:
+                raise OSError(f"SHFileOperationW failed with code {result}")
+            return
+        except Exception as e:
+            print(f"[Gallery] Recycle bin failed, falling back to permanent delete: {e}")
+    # Fallback for non-Windows or if shell API fails
+    os.remove(path)
 
 def is_safe_subpath(path, base_dir):
     try:
@@ -167,7 +214,7 @@ def setup_gallery_api():
                     "error": "Deletion Guard: Physical deletion is strictly restricted to files inside the ComfyUI output folder."
                 }, status=403)
 
-            os.remove(file_path)
+            send_to_recycle_bin(file_path)
             return web.json_response({"success": True, "filename": filename})
 
         except Exception as e:

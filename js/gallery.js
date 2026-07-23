@@ -558,7 +558,7 @@ class CustomGalleryPanel {
             <div class="gallery-menu-item" id="ctx-open-workflow">📂 Open as Workflow</div>
             <div class="gallery-menu-item" id="ctx-copy">📋 Copy Filename</div>
             <div class="gallery-menu-item" id="ctx-remove">❌ Remove from Gallery</div>
-            <div class="gallery-menu-item danger" id="ctx-delete">🗑️ Physical Delete</div>
+            <div class="gallery-menu-item danger" id="ctx-delete">🗑️ Send to Recycle Bin</div>
         `;
         document.body.appendChild(this.contextMenu);
 
