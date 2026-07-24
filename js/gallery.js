@@ -497,6 +497,7 @@ class CustomGalleryPanel {
         this.currentFolder = ""; // Default folder path relative to ComfyUI output
         this.viewMode = "thumbnail"; // "thumbnail" or "list"
         this.images = []; // Pure in-memory display array (retains all imported & generated images)
+        this.outputDir = ""; // Server-side output directory path (for constructing full_path)
         this.draggedIndex = null;
         this.currentModalIndex = -1;
 
@@ -525,6 +526,9 @@ class CustomGalleryPanel {
         }
 
         this.initEvents();
+
+        // Fetch output_dir from server for constructing full paths
+        this.fetchOutputDir();
 
         // Inject dock button near Manager button
         this.tryInjectDockButton();
@@ -577,6 +581,7 @@ class CustomGalleryPanel {
             <div class="gallery-menu-item" id="ctx-view">🔍 View Fullsize</div>
             <div class="gallery-menu-item" id="ctx-open-workflow">📂 Open as Workflow</div>
             <div class="gallery-menu-item" id="ctx-copy">📋 Copy Filename</div>
+            <div class="gallery-menu-item" id="ctx-reveal">📁 Reveal in File Explorer</div>
             <div class="gallery-menu-item" id="ctx-remove">❌ Remove from Gallery</div>
             <div class="gallery-menu-item danger" id="ctx-delete">🗑️ Send to Recycle Bin</div>
         `;
@@ -842,6 +847,22 @@ class CustomGalleryPanel {
             }
         });
 
+        this.contextMenu.querySelector("#ctx-reveal").addEventListener("click", async () => {
+            if (this.activeContextItem) {
+                const path = this.activeContextItem.full_path || "";
+                if (!path) { alert("No file path available."); return; }
+                try {
+                    await fetch("/my_utils/gallery/reveal", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ path })
+                    });
+                } catch (e) {
+                    console.error("[Gallery] Reveal error:", e);
+                }
+            }
+        });
+
         this.contextMenu.querySelector("#ctx-delete").addEventListener("click", () => {
             if (this.activeContextItem) {
                 this.deleteImage(this.activeContextItem);
@@ -862,11 +883,19 @@ class CustomGalleryPanel {
                         const exists = this.images.some(i => (i.full_path || (i.subfolder ? i.subfolder + "/" + i.filename : i.filename)) === key);
 
                         if (!exists) {
+                            // Construct full_path from outputDir + subfolder + filename
+                            let fullPath = img.full_path || "";
+                            if (!fullPath && this.outputDir) {
+                                fullPath = imgSubfolder
+                                    ? this.outputDir + "/" + imgSubfolder + "/" + img.filename
+                                    : this.outputDir + "/" + img.filename;
+                            }
+
                             // Prepend newly generated image path metadata to top of array
                             this.images.unshift({
                                 filename: img.filename,
                                 subfolder: imgSubfolder,
-                                full_path: img.full_path || "",
+                                full_path: fullPath,
                                 is_in_output: true,
                                 mtime: Date.now() / 1000,
                                 size: 0
@@ -960,6 +989,20 @@ class CustomGalleryPanel {
         this.panel.classList.remove("open");
     }
 
+    async fetchOutputDir() {
+        try {
+            const res = await fetch("/my_utils/gallery/images?folder=");
+            if (res.ok) {
+                const data = await res.json();
+                if (data.output_dir) {
+                    this.outputDir = data.output_dir;
+                }
+            }
+        } catch (e) {
+            console.warn("[Gallery] Failed to fetch output dir:", e);
+        }
+    }
+
     async fetchImages() {
         try {
             const folderParam = encodeURIComponent(this.currentFolder || "");
@@ -974,6 +1017,11 @@ class CustomGalleryPanel {
 
             if (data.error) {
                 console.error("[Gallery] Backend message:", data.error);
+            }
+
+            // Store server output directory for constructing full paths
+            if (data.output_dir) {
+                this.outputDir = data.output_dir;
             }
 
             // Replace gallery state with server-scanned images

@@ -274,7 +274,37 @@ def setup_gallery_api():
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
-    # Endpoint 5: Export gallery images to a subfolder with sequential naming
+    # Endpoint 5: Reveal file in Windows File Explorer
+    @PromptServer.instance.routes.post("/my_utils/gallery/reveal")
+    async def reveal_in_explorer(request):
+        try:
+            import subprocess
+
+            body = await request.json()
+            file_path = body.get("path", "").strip()
+
+            file_path = os.path.normpath(file_path)
+
+            if not os.path.exists(file_path):
+                return web.json_response({"error": "File does not exist"}, status=404)
+
+            if sys.platform == "win32":
+                # /select, and path must be combined into a single argument
+                subprocess.Popen(f'explorer /select,"{file_path}"')
+            else:
+                # macOS / Linux fallback: open containing folder
+                folder = os.path.dirname(file_path)
+                if sys.platform == "darwin":
+                    subprocess.Popen(["open", "-R", file_path])
+                else:
+                    subprocess.Popen(["xdg-open", folder])
+
+            return web.json_response({"success": True})
+
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    # Endpoint 6: Export gallery images to a subfolder with sequential naming
     @PromptServer.instance.routes.post("/my_utils/gallery/export")
     async def export_gallery_images(request):
         try:
