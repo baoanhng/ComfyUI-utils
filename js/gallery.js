@@ -1144,41 +1144,73 @@ class CustomGalleryPanel {
             return;
         }
 
-        const folderName = prompt(
-            `Export ${this.images.length} image(s) with sequential naming (000001, 000002, ...).\nThe last image in the gallery (bottom) becomes 000001.\n\nEnter a folder name (relative to output/) or an absolute path:`,
-            "export"
-        );
+        if (!window.showDirectoryPicker) {
+            alert("Folder selection is not supported by this browser. Open ComfyUI in a Chromium-based browser to export the gallery.");
+            return;
+        }
 
-        if (!folderName || !folderName.trim()) return;
+        let exportDir;
+        try {
+            exportDir = await window.showDirectoryPicker({
+                id: "my-utils-gallery-export",
+                mode: "readwrite"
+            });
+        } catch (e) {
+            if (e?.name === "AbortError") return;
+            console.error("[Gallery] Folder picker error:", e);
+            alert("Unable to open the export folder picker.");
+            return;
+        }
+
+        const exportBtn = this.panel.querySelector("#gallery-export-btn");
+        const originalLabel = exportBtn.textContent;
+        exportBtn.disabled = true;
+        exportBtn.textContent = "Exporting…";
+
+        let exportedCount = 0;
+        const failedFiles = [];
 
         try {
-            // Reverse the array: gallery is descending, so last item = lowest number (000001)
-            const reversedPaths = [...this.images].reverse().map(img => ({
-                full_path: img.full_path || "",
-                filename: img.filename,
-                subfolder: img.subfolder || ""
-            }));
+            // Reverse the gallery so its bottom image is exported as 000001.
+            const exportImages = [...this.images].reverse();
 
-            const res = await fetch("/my_utils/gallery/export", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    folder: folderName.trim(),
-                    images: reversedPaths
-                })
-            });
+            for (let idx = 0; idx < exportImages.length; idx++) {
+                const img = exportImages[idx];
+                try {
+                    const res = await fetch(this.getImageUrl(img));
+                    if (!res.ok) {
+                        throw new Error(`HTTP ${res.status}`);
+                    }
 
-            const data = await res.json();
-
-            if (!res.ok || data.error) {
-                alert(`Export failed: ${data.error || res.statusText}`);
-                return;
+                    const blob = await res.blob();
+                    const extensionMatch = img.filename.match(/\.[a-z0-9]+$/i);
+                    const extension = extensionMatch ? extensionMatch[0].toLowerCase() : "";
+                    const exportName = `${String(idx + 1).padStart(6, "0")}${extension}`;
+                    const fileHandle = await exportDir.getFileHandle(exportName, { create: true });
+                    const writable = await fileHandle.createWritable();
+                    await writable.write(blob);
+                    await writable.close();
+                    exportedCount++;
+                } catch (e) {
+                    console.error(`[Gallery] Failed to export ${img.filename}:`, e);
+                    failedFiles.push(img.filename);
+                }
             }
 
-            alert(`Export complete! ${data.count} image(s) saved to:\n${data.export_dir}`);
+            if (failedFiles.length > 0) {
+                alert(
+                    `Exported ${exportedCount} of ${exportImages.length} image(s) to "${exportDir.name}".\n\n` +
+                    `Failed: ${failedFiles.join(", ")}`
+                );
+            } else {
+                alert(`Export complete! ${exportedCount} image(s) saved to "${exportDir.name}".`);
+            }
         } catch (e) {
             console.error("[Gallery] Export error:", e);
             alert("Error exporting gallery images.");
+        } finally {
+            exportBtn.disabled = false;
+            exportBtn.textContent = originalLabel;
         }
     }
 
