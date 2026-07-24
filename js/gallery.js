@@ -351,19 +351,23 @@ const galleryStyles = `
     align-items: center;
     justify-content: center;
     max-width: calc(100vw - 160px);
-    max-height: 90vh;
+    max-height: 100vh;
 }
 
 #my-utils-gallery-modal img#modal-img {
     max-width: calc(100vw - 160px);
-    max-height: 80vh;
+    height: 100vh;
+    max-height: 100vh;
     object-fit: contain;
     border-radius: 8px;
     box-shadow: 0 8px 32px rgba(0,0,0,0.8);
 }
 
 .modal-caption {
-    margin-top: 12px;
+    position: absolute;
+    right: 24px;
+    bottom: 20px;
+    z-index: 10012;
     font-size: 13px;
     color: #e4e4e7;
     background: rgba(24, 24, 27, 0.85);
@@ -371,7 +375,6 @@ const galleryStyles = `
     border-radius: 20px;
     border: 1px solid #3f3f46;
     text-align: center;
-    word-break: break-all;
 }
 
 .modal-nav-btn {
@@ -1032,7 +1035,7 @@ class CustomGalleryPanel {
         const modalCaption = this.modal.querySelector("#modal-caption");
 
         modalImg.src = imageUrl;
-        modalCaption.textContent = `${img.filename} (${index + 1} / ${this.images.length})`;
+        modalCaption.textContent = `${index + 1} / ${this.images.length}`;
         this.modal.classList.add("show");
     }
 
