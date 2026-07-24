@@ -150,6 +150,25 @@ const galleryStyles = `
     background: #6366f1;
 }
 
+.gallery-export-btn {
+    background: #0d9488;
+    border: 1px solid #14b8a6;
+    color: #ffffff;
+    border-radius: 6px;
+    padding: 5px 10px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    transition: background 0.15s;
+}
+
+.gallery-export-btn:hover {
+    background: #14b8a6;
+}
+
 .gallery-btn-group {
     display: flex;
     background: #18181b;
@@ -535,6 +554,7 @@ class CustomGalleryPanel {
                     <div class="gallery-toolbar-row">
                         <button class="gallery-import-btn" id="gallery-import-btn" title="Import subset image files from ComfyUI output/">📥 Import</button>
                         <input type="file" id="gallery-file-input" accept="image/*" multiple style="display: none;" />
+                        <button class="gallery-export-btn" id="gallery-export-btn" title="Export gallery images to a folder with sequential naming">📤 Export</button>
                         <div class="gallery-btn-group">
                             <button class="gallery-mode-btn active" id="mode-btn-thumb" title="Thumbnail View (3 cols, max 100px)">▦</button>
                             <button class="gallery-mode-btn" id="mode-btn-list" title="List View (1 col, max 300px)">☰</button>
@@ -709,6 +729,11 @@ class CustomGalleryPanel {
         // Refresh Button
         this.panel.querySelector("#gallery-refresh-btn").addEventListener("click", () => {
             this.fetchImages();
+        });
+
+        // Export Button
+        this.panel.querySelector("#gallery-export-btn").addEventListener("click", () => {
+            this.exportGallery();
         });
 
         // Clear View Button
@@ -1254,6 +1279,50 @@ class CustomGalleryPanel {
         });
         this.saveStateToLocalStorage();
         this.renderGrid();
+    }
+
+    async exportGallery() {
+        if (!this.images || this.images.length === 0) {
+            alert("Gallery is empty. Nothing to export.");
+            return;
+        }
+
+        const folderName = prompt(
+            `Export ${this.images.length} image(s) with sequential naming (000001, 000002, ...).\nThe last image in the gallery (bottom) becomes 000001.\n\nEnter a folder name (relative to output/) or an absolute path:`,
+            "export"
+        );
+
+        if (!folderName || !folderName.trim()) return;
+
+        try {
+            // Reverse the array: gallery is descending, so last item = lowest number (000001)
+            const reversedPaths = [...this.images].reverse().map(img => ({
+                full_path: img.full_path || "",
+                filename: img.filename,
+                subfolder: img.subfolder || ""
+            }));
+
+            const res = await fetch("/my_utils/gallery/export", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    folder: folderName.trim(),
+                    images: reversedPaths
+                })
+            });
+
+            const data = await res.json();
+
+            if (!res.ok || data.error) {
+                alert(`Export failed: ${data.error || res.statusText}`);
+                return;
+            }
+
+            alert(`Export complete! ${data.count} image(s) saved to:\n${data.export_dir}`);
+        } catch (e) {
+            console.error("[Gallery] Export error:", e);
+            alert("Error exporting gallery images.");
+        }
     }
 
     reorderImages(fromIdx, toIdx) {

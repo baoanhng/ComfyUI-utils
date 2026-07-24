@@ -273,3 +273,68 @@ def setup_gallery_api():
 
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
+
+    # Endpoint 5: Export gallery images to a subfolder with sequential naming
+    @PromptServer.instance.routes.post("/my_utils/gallery/export")
+    async def export_gallery_images(request):
+        try:
+            import shutil
+
+            body = await request.json()
+            folder_name = body.get("folder", "").strip()
+            images = body.get("images", [])
+
+            if not folder_name:
+                return web.json_response({"error": "Folder name is required"}, status=400)
+
+            if not isinstance(images, list) or len(images) == 0:
+                return web.json_response({"error": "No images to export"}, status=400)
+
+            output_dir = folder_paths.get_output_directory()
+
+            # Support absolute paths or relative to output/
+            if os.path.isabs(folder_name):
+                export_dir = os.path.normpath(folder_name)
+            else:
+                export_dir = os.path.normpath(os.path.join(output_dir, folder_name))
+
+            os.makedirs(export_dir, exist_ok=True)
+
+            count = 0
+            for idx, img in enumerate(images):
+                # Resolve source path
+                full_path = img.get("full_path", "")
+                filename = img.get("filename", "")
+                subfolder = img.get("subfolder", "")
+
+                if full_path:
+                    src = os.path.normpath(full_path)
+                elif subfolder:
+                    src = os.path.normpath(os.path.join(output_dir, subfolder, filename))
+                else:
+                    src = os.path.normpath(os.path.join(output_dir, filename))
+
+                if not os.path.exists(src) or not os.path.isfile(src):
+                    print(f"[Gallery Export] Skipping missing file: {src}")
+                    continue
+
+                if not is_safe_subpath(src, output_dir):
+                    print(f"[Gallery Export] Skipping file outside output: {src}")
+                    continue
+
+                # Sequential name: 000001.ext, preserving original extension
+                ext = os.path.splitext(src)[1].lower()
+                seq_name = f"{idx + 1:06d}{ext}"
+                dst = os.path.join(export_dir, seq_name)
+
+                shutil.copy2(src, dst)
+                count += 1
+
+            return web.json_response({
+                "success": True,
+                "count": count,
+                "export_dir": export_dir.replace("\\", "/")
+            })
+
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
