@@ -738,27 +738,23 @@ class CustomGalleryPanel {
         });
 
         // 1. Listen for "executed" event (fires when node finishes generating images)
-        api.addEventListener("executed", (event) => {
+        api.addEventListener("executed", async (event) => {
             const output = event.detail?.output;
             if (output) {
                 const imgList = output.images || output.animated || output.gifs || [];
                 let addedAny = false;
 
+                if (!this.outputDir) await this.fetchOutputDir();
+
                 for (const img of imgList) {
                     if (!img.type || img.type === "output") {
-                        const imgSubfolder = img.subfolder || "";
-                        const key = img.full_path || (imgSubfolder ? imgSubfolder + "/" + img.filename : img.filename);
+                        const imgSubfolder = (img.subfolder || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+                        const relativePath = imgSubfolder ? `${imgSubfolder}/${img.filename}` : img.filename;
+                        const fullPath = this.outputDir ? `${this.outputDir}/${relativePath}` : "";
+                        const key = fullPath || relativePath;
                         const exists = this.images.some(i => (i.full_path || (i.subfolder ? i.subfolder + "/" + i.filename : i.filename)) === key);
 
                         if (!exists) {
-                            // Construct full_path from outputDir + subfolder + filename
-                            let fullPath = img.full_path || "";
-                            if (!fullPath && this.outputDir) {
-                                fullPath = imgSubfolder
-                                    ? this.outputDir + "/" + imgSubfolder + "/" + img.filename
-                                    : this.outputDir + "/" + img.filename;
-                            }
-
                             // Prepend newly generated image path metadata to top of array
                             this.images.unshift({
                                 filename: img.filename,
@@ -853,15 +849,17 @@ class CustomGalleryPanel {
     async fetchOutputDir() {
         try {
             const res = await fetch("/my_utils/gallery/output_dir");
-            if (res.ok) {
-                const data = await res.json();
-                if (data.output_dir) {
-                    this.outputDir = data.output_dir;
-                }
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}`);
+            }
+            const data = await res.json();
+            if (data.output_dir) {
+                this.outputDir = data.output_dir.replace(/\\/g, "/").replace(/\/+$/, "");
             }
         } catch (e) {
             console.warn("[Gallery] Failed to fetch output dir:", e);
         }
+        return this.outputDir;
     }
 
     saveStateToLocalStorage() {
@@ -897,7 +895,7 @@ class CustomGalleryPanel {
                     this.images = state.images.map(img => ({
                         filename: img.filename,
                         subfolder: img.subfolder || "",
-                        full_path: img.full_path || "",
+                        full_path: this.isAbsolutePath(img.full_path) ? img.full_path : "",
                         is_in_output: true,
                         mtime: img.mtime || 0,
                         size: img.size || 0
@@ -911,8 +909,12 @@ class CustomGalleryPanel {
         return false;
     }
 
+    isAbsolutePath(path) {
+        return typeof path === "string" && /^(?:[a-zA-Z]:[\\/]|\\\\|\/)/.test(path);
+    }
+
     getImageUrl(img) {
-        if (img.full_path) {
+        if (this.isAbsolutePath(img.full_path)) {
             return `/my_utils/gallery/view_file?path=${encodeURIComponent(img.full_path)}`;
         }
         return `/view?filename=${encodeURIComponent(img.filename)}&subfolder=${encodeURIComponent(img.subfolder || "")}&type=output`;
