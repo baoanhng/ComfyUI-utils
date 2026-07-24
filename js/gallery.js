@@ -25,11 +25,6 @@ const galleryStyles = `
     transform: translateX(0);
 }
 
-#my-utils-gallery-panel.drag-file-over {
-    border-right: 2px dashed #6366f1;
-    background: #1e1e24;
-}
-
 .gallery-dock-btn {
     cursor: pointer !important;
     display: inline-flex !important;
@@ -87,41 +82,6 @@ const galleryStyles = `
     display: flex;
     flex-direction: column;
     gap: 8px;
-}
-
-.gallery-input-group {
-    display: flex;
-    gap: 6px;
-}
-
-.gallery-folder-input {
-    flex: 1;
-    background: #18181b;
-    color: #e4e4e7;
-    border: 1px solid #3f3f46;
-    border-radius: 6px;
-    padding: 6px 8px;
-    font-size: 12px;
-    outline: none;
-}
-
-.gallery-folder-input:focus {
-    border-color: #6366f1;
-}
-
-.gallery-subfolder-select {
-    background: #18181b;
-    color: #e4e4e7;
-    border: 1px solid #3f3f46;
-    border-radius: 6px;
-    padding: 6px 8px;
-    font-size: 12px;
-    outline: none;
-    max-width: 140px;
-}
-
-.gallery-subfolder-select:focus {
-    border-color: #6366f1;
 }
 
 .gallery-toolbar-row {
@@ -191,20 +151,6 @@ const galleryStyles = `
     background: #3f3f46;
     color: #ffffff;
     font-weight: 600;
-}
-
-.gallery-refresh-btn {
-    background: #27272a;
-    border: 1px solid #3f3f46;
-    color: #a1a1aa;
-    border-radius: 6px;
-    padding: 5px 8px;
-    cursor: pointer;
-}
-
-.gallery-refresh-btn:hover {
-    color: #ffffff;
-    background: #3f3f46;
 }
 
 .gallery-clear-btn {
@@ -477,24 +423,8 @@ const galleryStyles = `
 }
 `;
 
-function isFolderMatch(imgSubfolder, activeFolder) {
-    if (!activeFolder) return true;
-
-    const normalize = (path) => {
-        if (!path) return "";
-        let s = path.trim().replace(/\\/g, "/").replace(/\/+$/, "");
-        if (s.toLowerCase() === "output" || s.toLowerCase().endsWith("/output")) return "";
-        return s.toLowerCase();
-    };
-
-    const s1 = normalize(imgSubfolder);
-    const s2 = normalize(activeFolder);
-    return s1 === s2;
-}
-
 class CustomGalleryPanel {
     constructor() {
-        this.currentFolder = ""; // Default folder path relative to ComfyUI output
         this.viewMode = "thumbnail"; // "thumbnail" or "list"
         this.images = []; // Pure in-memory display array (retains all imported & generated images)
         this.outputDir = ""; // Server-side output directory path (for constructing full_path)
@@ -508,7 +438,6 @@ class CustomGalleryPanel {
         this.loadStateFromLocalStorage();
 
         // Sync restored settings to UI elements
-        if (this.folderInput) this.folderInput.value = this.currentFolder;
         const thumbBtn = this.panel.querySelector("#mode-btn-thumb");
         const listBtn = this.panel.querySelector("#mode-btn-list");
         if (this.viewMode === "list") {
@@ -551,10 +480,6 @@ class CustomGalleryPanel {
                     <button class="gallery-close-btn" id="gallery-close-btn" title="Close Panel">✕</button>
                 </div>
                 <div class="gallery-controls">
-                    <div class="gallery-input-group">
-                        <input type="text" class="gallery-folder-input" id="gallery-folder-input" placeholder="Folder path (default: ComfyUI output)" title="Folder path inside output directory" />
-                        <select class="gallery-subfolder-select" id="gallery-subfolder-select" title="Quick subfolder picker"></select>
-                    </div>
                     <div class="gallery-toolbar-row">
                         <button class="gallery-import-btn" id="gallery-import-btn" title="Import subset image files from ComfyUI output/">📥 Import</button>
                         <input type="file" id="gallery-file-input" accept="image/*" multiple style="display: none;" />
@@ -563,7 +488,6 @@ class CustomGalleryPanel {
                             <button class="gallery-mode-btn active" id="mode-btn-thumb" title="Thumbnail View (3 cols, max 100px)">▦</button>
                             <button class="gallery-mode-btn" id="mode-btn-list" title="List View (1 col, max 300px)">☰</button>
                         </div>
-                        <button class="gallery-refresh-btn" id="gallery-refresh-btn" title="Merge & Refresh Folder Images">🔄</button>
                         <button class="gallery-clear-btn" id="gallery-clear-btn" title="Clear View (Reset Gallery)">🧹</button>
                     </div>
                 </div>
@@ -602,8 +526,6 @@ class CustomGalleryPanel {
         document.body.appendChild(this.modal);
 
         this.grid = this.panel.querySelector("#gallery-grid");
-        this.folderInput = this.panel.querySelector("#gallery-folder-input");
-        this.select = this.panel.querySelector("#gallery-subfolder-select");
         this.fileInput = this.panel.querySelector("#gallery-file-input");
         this.activeContextItem = null;
     }
@@ -668,32 +590,6 @@ class CustomGalleryPanel {
         // Close Button
         this.panel.querySelector("#gallery-close-btn").addEventListener("click", () => this.closePanel());
 
-        // Folder Input Text Change
-        this.folderInput.addEventListener("keydown", (e) => {
-            if (e.key === "Enter") {
-                this.currentFolder = this.folderInput.value.trim();
-                this.saveStateToLocalStorage();
-                this.fetchImages();
-            }
-        });
-
-        this.folderInput.addEventListener("blur", () => {
-            const val = this.folderInput.value.trim();
-            if (val !== this.currentFolder) {
-                this.currentFolder = val;
-                this.saveStateToLocalStorage();
-                this.fetchImages();
-            }
-        });
-
-        // Quick Subfolder Pick Dropdown
-        this.select.addEventListener("change", (e) => {
-            this.currentFolder = e.target.value;
-            this.folderInput.value = e.target.value;
-            this.saveStateToLocalStorage();
-            this.fetchImages();
-        });
-
         // Import Button & File Input for subset file selection
         const importBtn = this.panel.querySelector("#gallery-import-btn");
         importBtn.addEventListener("click", () => {
@@ -706,34 +602,6 @@ class CustomGalleryPanel {
             const items = Array.from(files).map(f => f.name);
             await this.importSubsetFiles(items);
             this.fileInput.value = "";
-        });
-
-        // External File Drag and Drop onto Panel
-        this.panel.addEventListener("dragover", (e) => {
-            if (e.dataTransfer && e.dataTransfer.types.includes("Files")) {
-                e.preventDefault();
-                this.panel.classList.add("drag-file-over");
-            }
-        });
-
-        this.panel.addEventListener("dragleave", (e) => {
-            if (!this.panel.contains(e.relatedTarget)) {
-                this.panel.classList.remove("drag-file-over");
-            }
-        });
-
-        this.panel.addEventListener("drop", async (e) => {
-            if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-                e.preventDefault();
-                this.panel.classList.remove("drag-file-over");
-                const items = Array.from(e.dataTransfer.files).map(f => f.name);
-                await this.importSubsetFiles(items);
-            }
-        });
-
-        // Refresh Button
-        this.panel.querySelector("#gallery-refresh-btn").addEventListener("click", () => {
-            this.fetchImages();
         });
 
         // Export Button
@@ -917,10 +785,7 @@ class CustomGalleryPanel {
             const res = await fetch("/my_utils/gallery/verify_import", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    folder: this.currentFolder,
-                    items: items
-                })
+                body: JSON.stringify({ items })
             });
 
             if (!res.ok) {
@@ -950,7 +815,6 @@ class CustomGalleryPanel {
             let addedCount = 0;
             validImages.forEach(img => {
                 const key = img.full_path || (img.subfolder ? img.subfolder + "/" + img.filename : img.filename);
-                this.removedKeys.delete(key); // User explicitly re-importing overrides prior removal
                 if (!existingMap.has(key)) {
                     this.images.unshift(img);
                     existingMap.set(key, img);
@@ -980,9 +844,6 @@ class CustomGalleryPanel {
 
     openPanel() {
         this.panel.classList.add("open");
-        if (this.images.length === 0) {
-            this.fetchImages();
-        }
     }
 
     closePanel() {
@@ -991,7 +852,7 @@ class CustomGalleryPanel {
 
     async fetchOutputDir() {
         try {
-            const res = await fetch("/my_utils/gallery/images?folder=");
+            const res = await fetch("/my_utils/gallery/output_dir");
             if (res.ok) {
                 const data = await res.json();
                 if (data.output_dir) {
@@ -1003,58 +864,9 @@ class CustomGalleryPanel {
         }
     }
 
-    async fetchImages() {
-        try {
-            const folderParam = encodeURIComponent(this.currentFolder || "");
-            const res = await fetch(`/my_utils/gallery/images?folder=${folderParam}`);
-
-            if (!res.ok) {
-                console.error(`[Gallery] HTTP Error ${res.status}: ${res.statusText}`);
-                return;
-            }
-
-            const data = await res.json();
-
-            if (data.error) {
-                console.error("[Gallery] Backend message:", data.error);
-            }
-
-            // Store server output directory for constructing full paths
-            if (data.output_dir) {
-                this.outputDir = data.output_dir;
-            }
-
-            // Replace gallery state with server-scanned images
-            this.images = data.images || [];
-
-            // Update subfolders dropdown
-            this.select.innerHTML = "";
-            const defaultOpt = document.createElement("option");
-            defaultOpt.value = "";
-            defaultOpt.textContent = "📁 output (Root)";
-            this.select.appendChild(defaultOpt);
-
-            (data.subfolders || []).forEach(sf => {
-                if (sf) {
-                    const opt = document.createElement("option");
-                    opt.value = sf;
-                    opt.textContent = `📁 ${sf}`;
-                    if (sf === this.currentFolder) opt.selected = true;
-                    this.select.appendChild(opt);
-                }
-            });
-
-            this.saveStateToLocalStorage();
-            this.renderGrid();
-        } catch (e) {
-            console.error("[Gallery] Failed to fetch images:", e);
-        }
-    }
-
     saveStateToLocalStorage() {
         try {
             const state = {
-                currentFolder: this.currentFolder || "",
                 viewMode: this.viewMode || "thumbnail",
                 images: this.images.map(img => ({
                     filename: img.filename,
@@ -1077,9 +889,6 @@ class CustomGalleryPanel {
             if (!saved) return false;
             const state = JSON.parse(saved);
             if (state) {
-                if (typeof state.currentFolder === "string") {
-                    this.currentFolder = state.currentFolder;
-                }
                 if (state.viewMode === "thumbnail" || state.viewMode === "list") {
                     this.viewMode = state.viewMode;
                 }
@@ -1113,7 +922,7 @@ class CustomGalleryPanel {
         this.grid.innerHTML = "";
 
         if (!this.images || this.images.length === 0) {
-            this.grid.innerHTML = `<div class="gallery-empty">No images found.<br/><br/>Default folder: <code>ComfyUI/output</code>.<br/>Type a folder path above or click <b>📥 Import</b> to add files.</div>`;
+            this.grid.innerHTML = `<div class="gallery-empty">No images in the gallery.<br/><br/>Click <b>📥 Import</b> to select images from <code>ComfyUI/output</code>.</div>`;
             return;
         }
 
@@ -1264,7 +1073,7 @@ class CustomGalleryPanel {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    folder: this.currentFolder,
+                    folder: img.subfolder || "",
                     filename: img.filename,
                     path: img.full_path
                 })

@@ -61,94 +61,12 @@ def is_safe_subpath(path, base_dir):
     except Exception:
         return False
 
-def get_subfolders(base_dir):
-    subfolders = [""]
-    try:
-        if os.path.exists(base_dir):
-            for entry in os.scandir(base_dir):
-                if entry.is_dir() and not entry.name.startswith('.'):
-                    rel_path = entry.name
-                    subfolders.append(rel_path)
-                    try:
-                        for subentry in os.scandir(entry.path):
-                            if subentry.is_dir() and not subentry.name.startswith('.'):
-                                subfolders.append(os.path.join(rel_path, subentry.name).replace("\\", "/"))
-                    except Exception:
-                        pass
-    except Exception as e:
-        print(f"[Gallery] Error scanning subfolders: {e}")
-    return sorted(list(set(subfolders)))
-
-def scan_folder_images(folder_input=""):
-    output_dir = folder_paths.get_output_directory()
-
-    # Determine target directory (Default to ComfyUI output_dir)
-    folder_input = (folder_input or "").strip()
-    if not folder_input:
-        target_dir = output_dir
-    elif os.path.isabs(folder_input):
-        target_dir = os.path.normpath(folder_input)
-    else:
-        target_dir = os.path.normpath(os.path.join(output_dir, folder_input))
-
-    subfolders = get_subfolders(output_dir)
-
-    if not os.path.exists(target_dir) or not os.path.isdir(target_dir):
-        return {
-            "current_folder": folder_input,
-            "target_dir": target_dir,
-            "output_dir": output_dir,
-            "subfolders": subfolders,
-            "images": [],
-            "error": f"Folder does not exist: {target_dir}"
-        }
-
-    # Read image file paths without moving or copying any files
-    images = []
-    try:
-        for entry in os.scandir(target_dir):
-            if entry.is_file():
-                ext = os.path.splitext(entry.name)[1].lower()
-                if ext in IMAGE_EXTENSIONS:
-                    stat = entry.stat()
-                    full_path = os.path.join(target_dir, entry.name)
-
-                    # Check if file is physically inside output_dir (for deletion guard)
-                    in_output = is_safe_subpath(full_path, output_dir)
-                    subfolder = ""
-                    if in_output:
-                        rel = os.path.relpath(os.path.dirname(full_path), output_dir)
-                        subfolder = "" if rel == "." else rel.replace("\\", "/")
-
-                    images.append({
-                        "filename": entry.name,
-                        "subfolder": subfolder,
-                        "full_path": full_path.replace("\\", "/"),
-                        "is_in_output": in_output,
-                        "mtime": stat.st_mtime,
-                        "size": stat.st_size
-                    })
-    except Exception as e:
-        print(f"[Gallery] Error scanning folder {target_dir}: {e}")
-
-    # Initial sort by filename descending (names desc)
-    images.sort(key=lambda x: x["filename"].lower(), reverse=True)
-
-    return {
-        "current_folder": folder_input,
-        "target_dir": target_dir.replace("\\", "/"),
-        "output_dir": output_dir.replace("\\", "/"),
-        "subfolders": subfolders,
-        "images": images
-    }
-
 def setup_gallery_api():
-    # Endpoint 1: Read image paths from folder (default output_dir, no copying)
-    @PromptServer.instance.routes.get("/my_utils/gallery/images")
-    async def get_gallery_images(request):
-        folder_input = request.query.get("folder", "")
-        data = scan_folder_images(folder_input)
-        return web.json_response(data)
+    # Endpoint 1: Return the output directory used for generated image paths
+    @PromptServer.instance.routes.get("/my_utils/gallery/output_dir")
+    async def get_gallery_output_dir(request):
+        output_dir = folder_paths.get_output_directory()
+        return web.json_response({"output_dir": output_dir.replace("\\", "/")})
 
     # Endpoint 2: Serve image file safely
     @PromptServer.instance.routes.get("/my_utils/gallery/view_file")
@@ -212,7 +130,6 @@ def setup_gallery_api():
     async def verify_import_gallery_images(request):
         try:
             body = await request.json()
-            folder_input = body.get("folder", "")
             items = body.get("items", [])
 
             output_dir = folder_paths.get_output_directory()
@@ -230,15 +147,8 @@ def setup_gallery_api():
                 if os.path.isabs(item_str):
                     file_path = os.path.normpath(item_str)
                 else:
-                    # 1. Try current folder first
-                    target_dir = os.path.join(output_dir, folder_input) if folder_input else output_dir
-                    file_path = os.path.normpath(os.path.join(target_dir, item_str))
-
-                    # 2. Fallback: try output root
-                    if not os.path.exists(file_path):
-                        file_path = os.path.normpath(os.path.join(output_dir, item_str))
-
-                    # 3. Fallback: search all subfolders inside output/ for the bare filename
+                    # Try output root, then search its subfolders for the selected filename
+                    file_path = os.path.normpath(os.path.join(output_dir, item_str))
                     if not os.path.exists(file_path):
                         found = glob.glob(os.path.join(output_dir, "**", item_str), recursive=True)
                         # Filter to only files inside output_dir
