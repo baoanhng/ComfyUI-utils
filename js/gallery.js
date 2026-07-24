@@ -5,7 +5,7 @@ import { api } from "../../scripts/api.js";
 const galleryStyles = `
 #my-utils-gallery-panel {
     position: fixed;
-    top: 0;
+    top: 53px;
     left: 0;
     bottom: 0;
     width: 350px;
@@ -479,7 +479,7 @@ const galleryStyles = `
 
 function isFolderMatch(imgSubfolder, activeFolder) {
     if (!activeFolder) return true;
-    
+
     const normalize = (path) => {
         if (!path) return "";
         let s = path.trim().replace(/\\/g, "/").replace(/\/+$/, "");
@@ -742,7 +742,7 @@ class CustomGalleryPanel {
                 this.images = [];
                 try {
                     localStorage.removeItem("my_utils_gallery_paths_state");
-                } catch (err) {}
+                } catch (err) { }
                 this.renderGrid();
             }
         });
