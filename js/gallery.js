@@ -168,6 +168,50 @@ const galleryStyles = `
     background: #451a1a;
 }
 
+/* Workspace Bar */
+.gallery-workspace-bar {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+}
+
+.gallery-ws-select {
+    flex: 1;
+    background: #18181b;
+    color: #e4e4e7;
+    border: 1px solid #3f3f46;
+    border-radius: 6px;
+    padding: 4px 6px;
+    font-size: 12px;
+    outline: none;
+    cursor: pointer;
+}
+
+.gallery-ws-select:focus {
+    border-color: #6366f1;
+}
+
+.gallery-ws-btn {
+    background: #27272a;
+    border: 1px solid #3f3f46;
+    color: #a1a1aa;
+    border-radius: 6px;
+    padding: 4px 7px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: background 0.15s, color 0.15s;
+}
+
+.gallery-ws-btn:hover {
+    color: #ffffff;
+    background: #3f3f46;
+}
+
+.gallery-ws-btn.danger:hover {
+    color: #f87171;
+    background: #451a1a;
+}
+
 .gallery-content {
     flex: 1;
     overflow-y: auto;
@@ -428,6 +472,7 @@ const galleryStyles = `
 
 class CustomGalleryPanel {
     constructor() {
+        this.activeWorkspace = "default";
         this.viewMode = "thumbnail"; // "thumbnail" or "list"
         this.images = []; // Pure in-memory display array (retains all imported & generated images)
         this.outputDir = ""; // Server-side output directory path (for constructing full_path)
@@ -457,6 +502,9 @@ class CustomGalleryPanel {
             this.renderGrid();
         }
 
+        // Populate workspace dropdown
+        this.renderWorkspaceSelect();
+
         this.initEvents();
 
         // Fetch output_dir from server for constructing full paths
@@ -483,6 +531,12 @@ class CustomGalleryPanel {
                     <button class="gallery-close-btn" id="gallery-close-btn" title="Close Panel">✕</button>
                 </div>
                 <div class="gallery-controls">
+                    <div class="gallery-workspace-bar">
+                        <select class="gallery-ws-select" id="gallery-ws-select" title="Switch workspace"></select>
+                        <button class="gallery-ws-btn" id="gallery-ws-new" title="New blank workspace">＋</button>
+                        <button class="gallery-ws-btn" id="gallery-ws-clone" title="Clone current workspace">📋</button>
+                        <button class="gallery-ws-btn danger" id="gallery-ws-delete" title="Delete current workspace">✕</button>
+                    </div>
                     <div class="gallery-toolbar-row">
                         <button class="gallery-import-btn" id="gallery-import-btn" title="Import subset image files from ComfyUI output/">📥 Import</button>
                         <input type="file" id="gallery-file-input" accept="image/*" multiple style="display: none;" />
@@ -530,6 +584,7 @@ class CustomGalleryPanel {
 
         this.grid = this.panel.querySelector("#gallery-grid");
         this.fileInput = this.panel.querySelector("#gallery-file-input");
+        this.wsSelect = this.panel.querySelector("#gallery-ws-select");
         this.activeContextItem = null;
     }
 
@@ -593,6 +648,32 @@ class CustomGalleryPanel {
         // Close Button
         this.panel.querySelector("#gallery-close-btn").addEventListener("click", () => this.closePanel());
 
+        // Workspace Controls
+        this.wsSelect.addEventListener("change", (e) => {
+            this.switchWorkspace(e.target.value);
+        });
+
+        this.panel.querySelector("#gallery-ws-new").addEventListener("click", () => {
+            const name = prompt("New workspace name:");
+            if (!name || !name.trim()) return;
+            this.createWorkspace(name.trim(), false);
+        });
+
+        this.panel.querySelector("#gallery-ws-clone").addEventListener("click", () => {
+            const name = prompt("Clone current workspace as:", this.activeWorkspace + " copy");
+            if (!name || !name.trim()) return;
+            this.createWorkspace(name.trim(), true);
+        });
+
+        this.panel.querySelector("#gallery-ws-delete").addEventListener("click", () => {
+            if (this.activeWorkspace === "default") {
+                alert("Cannot delete the default workspace.");
+                return;
+            }
+            if (!confirm(`Delete workspace "${this.activeWorkspace}"?`)) return;
+            this.deleteWorkspace(this.activeWorkspace);
+        });
+
         // Import Button & File Input for subset file selection
         const importBtn = this.panel.querySelector("#gallery-import-btn");
         importBtn.addEventListener("click", () => {
@@ -614,11 +695,9 @@ class CustomGalleryPanel {
 
         // Clear View Button
         this.panel.querySelector("#gallery-clear-btn").addEventListener("click", () => {
-            if (confirm("Reset in-memory gallery view?")) {
+            if (confirm(`Reset workspace "${this.activeWorkspace}"?`)) {
                 this.images = [];
-                try {
-                    localStorage.removeItem("my_utils_gallery_paths_state");
-                } catch (err) { }
+                this.saveStateToLocalStorage();
                 this.renderGrid();
             }
         });
@@ -865,6 +944,93 @@ class CustomGalleryPanel {
         return this.outputDir;
     }
 
+    // ── Workspace Management ──
+
+    _wsKey(name) {
+        return `my_utils_gallery_ws_${name}`;
+    }
+
+    getWorkspaceList() {
+        try {
+            const raw = localStorage.getItem("my_utils_gallery_workspaces");
+            if (raw) return JSON.parse(raw);
+        } catch (e) {}
+        return ["default"];
+    }
+
+    saveWorkspaceList(list) {
+        localStorage.setItem("my_utils_gallery_workspaces", JSON.stringify(list));
+    }
+
+    renderWorkspaceSelect() {
+        const list = this.getWorkspaceList();
+        this.wsSelect.innerHTML = "";
+        list.forEach(name => {
+            const opt = document.createElement("option");
+            opt.value = name;
+            opt.textContent = name;
+            if (name === this.activeWorkspace) opt.selected = true;
+            this.wsSelect.appendChild(opt);
+        });
+    }
+
+    createWorkspace(name, clone) {
+        const list = this.getWorkspaceList();
+        if (list.includes(name)) {
+            alert(`Workspace "${name}" already exists.`);
+            return;
+        }
+        list.push(name);
+        this.saveWorkspaceList(list);
+
+        if (clone) {
+            // Clone current state into the new workspace
+            const state = {
+                viewMode: this.viewMode,
+                images: this.images.map(img => ({ ...img }))
+            };
+            localStorage.setItem(this._wsKey(name), JSON.stringify(state));
+        }
+
+        this.switchWorkspace(name);
+    }
+
+    deleteWorkspace(name) {
+        let list = this.getWorkspaceList().filter(n => n !== name);
+        if (list.length === 0) list = ["default"];
+        this.saveWorkspaceList(list);
+        try { localStorage.removeItem(this._wsKey(name)); } catch (e) {}
+        this.switchWorkspace(list[0]);
+    }
+
+    switchWorkspace(name) {
+        // Save current workspace first
+        this.saveStateToLocalStorage();
+
+        this.activeWorkspace = name;
+        localStorage.setItem("my_utils_gallery_active_ws", name);
+
+        // Load new workspace state
+        this.images = [];
+        this.viewMode = "thumbnail";
+        this.loadStateFromLocalStorage();
+
+        // Sync UI
+        this.renderWorkspaceSelect();
+        const thumbBtn = this.panel.querySelector("#mode-btn-thumb");
+        const listBtn = this.panel.querySelector("#mode-btn-list");
+        if (this.viewMode === "list") {
+            listBtn.classList.add("active"); thumbBtn.classList.remove("active");
+            this.grid.className = "gallery-grid mode-list";
+        } else {
+            thumbBtn.classList.add("active"); listBtn.classList.remove("active");
+            this.grid.className = "gallery-grid mode-thumbnail";
+        }
+        this.renderGrid();
+    }
+
+    // ── State Persistence (per-workspace) ──
+
     saveStateToLocalStorage() {
         try {
             const state = {
@@ -878,15 +1044,33 @@ class CustomGalleryPanel {
                     size: img.size || 0
                 }))
             };
-            localStorage.setItem("my_utils_gallery_paths_state", JSON.stringify(state));
+            localStorage.setItem(this._wsKey(this.activeWorkspace), JSON.stringify(state));
         } catch (e) {
-            console.warn("[Gallery] Failed to save path state to localStorage:", e);
+            console.warn("[Gallery] Failed to save state:", e);
         }
     }
 
     loadStateFromLocalStorage() {
         try {
-            const saved = localStorage.getItem("my_utils_gallery_paths_state");
+            // Migration: move old key into "default" workspace
+            const oldData = localStorage.getItem("my_utils_gallery_paths_state");
+            if (oldData && !localStorage.getItem(this._wsKey("default"))) {
+                localStorage.setItem(this._wsKey("default"), oldData);
+                localStorage.removeItem("my_utils_gallery_paths_state");
+            }
+
+            // Load active workspace from persisted value
+            const savedActive = localStorage.getItem("my_utils_gallery_active_ws");
+            if (savedActive) this.activeWorkspace = savedActive;
+
+            // Ensure workspace list includes the active workspace
+            const list = this.getWorkspaceList();
+            if (!list.includes(this.activeWorkspace)) {
+                list.push(this.activeWorkspace);
+                this.saveWorkspaceList(list);
+            }
+
+            const saved = localStorage.getItem(this._wsKey(this.activeWorkspace));
             if (!saved) return false;
             const state = JSON.parse(saved);
             if (state) {
@@ -894,7 +1078,6 @@ class CustomGalleryPanel {
                     this.viewMode = state.viewMode;
                 }
                 if (Array.isArray(state.images) && state.images.length > 0) {
-                    // Ensure only path metadata objects exist
                     this.images = state.images.map(img => ({
                         filename: img.filename,
                         subfolder: img.subfolder || "",
@@ -907,7 +1090,7 @@ class CustomGalleryPanel {
                 return true;
             }
         } catch (e) {
-            console.warn("[Gallery] Failed to load path state from localStorage:", e);
+            console.warn("[Gallery] Failed to load state:", e);
         }
         return false;
     }
